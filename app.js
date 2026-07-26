@@ -189,8 +189,8 @@ function renderizarLeads(leads) {
     } else {
       const botaoAbrir = lead.enviada
         ? ""
-        : `<button ${lead.aberto ? "disabled" : ""} onclick="abrirConversa('${lead.id}')">
-             ${lead.aberto ? "Aberto ✓" : "Abrir conversa"}
+        : `<button onclick="abrirConversa('${lead.id}')">
+             ${lead.aberto ? "Reabrir conversa" : "Abrir conversa"}
            </button>`;
 
       const botaoEnviar = `<button class="enviar" ${lead.enviada ? "disabled" : ""} onclick="enviarConversa('${lead.id}')">
