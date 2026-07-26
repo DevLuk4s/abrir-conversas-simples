@@ -50,6 +50,7 @@
   button.nao-encontrado { background: #888; }
   button.remover { background: #e55555; padding: 8px 12px; margin-left: 6px; }
   .limpar { background: #999; float: right; margin-bottom: 10px; }
+  .exportar { background: #555; float: right; margin: 0 8px 10px 0; }
   .vazio { text-align: center; color: #888; padding: 30px; }
   .aviso {
     background: #fff8e1;
@@ -80,7 +81,13 @@
   <input type="file" id="inputCsv" accept=".csv" />
 </div>
 
+<div class="upload-area" id="areaImportar" style="padding: 14px; margin-bottom: 20px;">
+  <div id="textoImportar" style="font-size: 13px; color: #666;">Importar backup de outro painel (arquivo .json)</div>
+  <input type="file" id="inputImportar" accept=".json" />
+</div>
+
 <button class="limpar" onclick="limparLista()">Limpar lista</button>
+<button class="exportar" onclick="exportarBackup()">Exportar backup</button>
 <div class="contador" id="contador"></div>
 
 <table id="tabela" style="display:none">

@@ -7,6 +7,8 @@ const CHAVE_STORAGE = "abrirConversasLeads";
 
 const areaUpload = document.getElementById("areaUpload");
 const inputCsv = document.getElementById("inputCsv");
+const inputImportar = document.getElementById("inputImportar");
+const textoImportar = document.getElementById("textoImportar");
 const textoUpload = document.getElementById("textoUpload");
 const tabela = document.getElementById("tabela");
 const corpoTabela = document.getElementById("corpoTabela");
@@ -240,6 +242,75 @@ function limparLista() {
   if (!confirm("Limpar a lista de leads atual?")) return;
   salvarLeads([]);
   renderizarLeads([]);
+}
+
+// --- Importar backup de outro painel (ex: da versão antiga em Node/Express) ---
+inputImportar.addEventListener("change", () => {
+  if (inputImportar.files[0]) importarBackup(inputImportar.files[0]);
+});
+
+function importarBackup(arquivo) {
+  const leitor = new FileReader();
+  leitor.onload = () => {
+    let leadsImportados;
+    try {
+      leadsImportados = JSON.parse(leitor.result);
+    } catch (e) {
+      textoImportar.textContent = "Erro: arquivo não é um JSON válido";
+      return;
+    }
+    if (!Array.isArray(leadsImportados)) {
+      textoImportar.textContent = "Erro: formato inesperado (esperava uma lista de leads)";
+      return;
+    }
+
+    // Mescla com o que já existir aqui, casando por telefone — sem apagar
+    // progresso que já tiver sido feito direto nesse navegador
+    const atuaisPorTelefone = {};
+    for (const lead of lerLeads()) {
+      atuaisPorTelefone[lead.telefone] = lead;
+    }
+
+    for (const importado of leadsImportados) {
+      const existente = atuaisPorTelefone[importado.telefone];
+      if (!existente) {
+        atuaisPorTelefone[importado.telefone] = importado;
+      } else {
+        // Se já existe, mantém o que já estiver marcado como feito (não regride status)
+        atuaisPorTelefone[importado.telefone] = {
+          ...importado,
+          aberto: existente.aberto || importado.aberto,
+          abertoEm: existente.abertoEm || importado.abertoEm,
+          enviada: existente.enviada || importado.enviada,
+          enviadaEm: existente.enviadaEm || importado.enviadaEm,
+          naoEncontrado: existente.naoEncontrado || importado.naoEncontrado,
+          naoEncontradoEm: existente.naoEncontradoEm || importado.naoEncontradoEm,
+        };
+      }
+    }
+
+    const leadsFinal = Object.values(atuaisPorTelefone);
+    salvarLeads(leadsFinal);
+    textoImportar.textContent = `Importado! ${leadsImportados.length} leads do backup mesclados.`;
+    renderizarLeads(leadsFinal);
+  };
+  leitor.readAsText(arquivo, "utf-8");
+}
+
+function exportarBackup() {
+  const leads = lerLeads();
+  const conteudo = JSON.stringify(leads, null, 2);
+  const blob = new Blob([conteudo], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+
+  const dataDeHoje = new Date().toISOString().slice(0, 10);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `abrir-conversas-backup-${dataDeHoje}.json`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 // Carrega o que já tiver salvo assim que a página abre
