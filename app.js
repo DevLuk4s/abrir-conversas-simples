@@ -4,11 +4,14 @@
 // ficam salvos no localStorage deste navegador/aparelho específico.
 
 const CHAVE_STORAGE = "abrirConversasLeads";
+const CHAVE_MODELO = "abrirConversasModeloMensagem";
+const MODELO_PADRAO = "Oi! Vi que a {NOME} não tem site próprio ainda — só o Google Maps mesmo. Posso te mandar um exemplo?";
 
 const areaUpload = document.getElementById("areaUpload");
 const inputCsv = document.getElementById("inputCsv");
 const inputImportar = document.getElementById("inputImportar");
 const textoImportar = document.getElementById("textoImportar");
+const modeloMensagem = document.getElementById("modeloMensagem");
 const textoUpload = document.getElementById("textoUpload");
 const tabela = document.getElementById("tabela");
 const corpoTabela = document.getElementById("corpoTabela");
@@ -76,6 +79,12 @@ function escaparHtml(texto) {
   div.textContent = texto;
   return div.innerHTML;
 }
+
+// --- Modelo de mensagem (salvo separado dos leads, também no localStorage) ---
+modeloMensagem.value = localStorage.getItem(CHAVE_MODELO) || MODELO_PADRAO;
+modeloMensagem.addEventListener("input", () => {
+  localStorage.setItem(CHAVE_MODELO, modeloMensagem.value);
+});
 
 // --- Upload do CSV ---
 inputCsv.addEventListener("change", () => {
@@ -220,7 +229,12 @@ function atualizarLead(id, campos) {
 function abrirConversa(id) {
   const lead = lerLeads().find((l) => l.id === id);
   if (!lead) return;
-  window.open(`https://wa.me/${lead.telefone}`, "_blank");
+
+  const modelo = modeloMensagem.value || MODELO_PADRAO;
+  const mensagem = modelo.replace(/{NOME}/g, lead.nome);
+  const link = `https://wa.me/${lead.telefone}?text=${encodeURIComponent(mensagem)}`;
+
+  window.open(link, "_blank");
   atualizarLead(id, { aberto: true, abertoEm: new Date().toISOString() });
 }
 
