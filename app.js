@@ -209,7 +209,6 @@ function renderizarLeads(leads) {
       <td>${lead.telefone}</td>
       <td>
         ${botoesAcao}
-        <button class="remover" title="Remover da lista" onclick="removerLead('${lead.id}')">×</button>
       </td>
     `;
     corpoTabela.appendChild(linha);
@@ -244,12 +243,6 @@ function enviarConversa(id) {
 
 function marcarNaoEncontrado(id) {
   atualizarLead(id, { naoEncontrado: true, naoEncontradoEm: new Date().toISOString() });
-}
-
-function removerLead(id) {
-  const leads = lerLeads().filter((l) => l.id !== id);
-  salvarLeads(leads);
-  renderizarLeads(leads);
 }
 
 function limparLista() {
