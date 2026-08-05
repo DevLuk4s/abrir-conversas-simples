@@ -64,6 +64,12 @@
     thead { display: none; }
     tr { margin-bottom: 12px; border-radius: 8px; overflow: hidden; border: 1px solid #eee; }
     td { border-bottom: none; }
+    td[data-label]::before {
+      content: attr(data-label) ": ";
+      font-weight: 600;
+      color: #666;
+    }
+    td[data-label="Ação"]::before { display: block; margin-bottom: 4px; }
   }
 </style>
 </head>
@@ -81,7 +87,7 @@
 <textarea id="modeloMensagem" rows="3" style="width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid #ccc; font-family: inherit; font-size: 14px; margin-bottom: 20px;" placeholder="Oi! Vi que a {NOME} não tem site próprio ainda..."></textarea>
 
 <div class="upload-area" id="areaUpload">
-  <div id="textoUpload">Escolha o CSV de leads (nome,telefone) ou arraste aqui</div>
+  <div id="textoUpload">Escolha o CSV de leads (nome,telefone) ou arraste aqui — se o CSV tiver colunas de avaliações, url e instagram, elas entram automaticamente</div>
   <input type="file" id="inputCsv" accept=".csv" />
 </div>
 
@@ -96,7 +102,7 @@
 
 <table id="tabela" style="display:none">
   <thead>
-    <tr><th>Nome</th><th>Telefone</th><th>Ação</th></tr>
+    <tr><th>Nome</th><th>Telefone</th><th>Avaliações</th><th>Google Maps</th><th>Instagram</th><th>Ação</th></tr>
   </thead>
   <tbody id="corpoTabela"></tbody>
 </table>

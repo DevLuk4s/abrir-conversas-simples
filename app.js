@@ -55,15 +55,22 @@ function parseCSV(texto) {
   return linhas;
 }
 
-// Detecta qual coluna é nome e qual é telefone, aceitando tanto o formato
-// já convertido (nome,telefone) quanto o bruto do Apify/Google Maps (title,phone...)
+// Detecta as colunas relevantes, aceitando tanto o formato já convertido
+// (nome,telefone) quanto o bruto do Apify/Google Maps (title,phone,reviewsCount,url...)
 function detectarColunas(cabecalho) {
   const minusculo = cabecalho.map((h) => h.trim().toLowerCase());
   const idxNome = minusculo.findIndex((h) => h === "nome" || h === "title" || h === "name");
   const idxTelefone = minusculo.findIndex(
     (h) => h === "telefone" || h === "phoneunformatted" || h === "phone"
   );
-  return { idxNome, idxTelefone };
+  const idxAvaliacoes = minusculo.findIndex(
+    (h) => h === "avaliações" || h === "avaliacoes" || h === "reviewscount"
+  );
+  const idxUrl = minusculo.findIndex((h) => h === "url" || h === "link" || h === "googlemapsurl");
+  const idxInstagram = minusculo.findIndex(
+    (h) => h.includes("instagram") || h === "rede social" || h === "redesocial"
+  );
+  return { idxNome, idxTelefone, idxAvaliacoes, idxUrl, idxInstagram };
 }
 
 // Limpa o telefone e garante o código do Brasil (55) na frente
@@ -120,7 +127,7 @@ function processarCSV(texto) {
   }
 
   const cabecalho = linhas[0];
-  const { idxNome, idxTelefone } = detectarColunas(cabecalho);
+  const { idxNome, idxTelefone, idxAvaliacoes, idxUrl, idxInstagram } = detectarColunas(cabecalho);
   if (idxNome === -1 || idxTelefone === -1) {
     textoUpload.textContent = "Erro: não encontrei colunas de nome/telefone (esperado: nome,telefone ou title,phone)";
     return;
@@ -141,11 +148,17 @@ function processarCSV(texto) {
     if (!nome || !telefoneFormatado) continue;
 
     const antigo = statusAntigoPorTelefone[telefoneFormatado];
+    const avaliacoes = idxAvaliacoes !== -1 ? parseInt((linha[idxAvaliacoes] || "0").replace(/\D/g, ""), 10) || 0 : 0;
+    const mapsUrl = idxUrl !== -1 ? (linha[idxUrl] || "").trim() || null : null;
+    const instagram = idxInstagram !== -1 ? (linha[idxInstagram] || "").trim() || null : null;
 
     leads.push({
       id: `${telefoneFormatado}-${i}`,
       nome,
       telefone: telefoneFormatado,
+      avaliacoes,
+      mapsUrl,
+      instagram,
       aberto: antigo ? antigo.aberto : false,
       abertoEm: antigo ? antigo.abertoEm : null,
       enviada: antigo ? antigo.enviada : false,
@@ -176,8 +189,11 @@ function renderizarLeads(leads) {
   const enviados = leads.filter((l) => l.enviada).length;
   contador.textContent = `${abertos} de ${leads.length} conversas abertas · ${enviados} mensagens marcadas como enviadas`;
 
+  // Mostra sempre do mais avaliado pro menos avaliado, sem alterar a ordem salva
+  const leadsOrdenados = leads.slice().sort((a, b) => (b.avaliacoes || 0) - (a.avaliacoes || 0));
+
   corpoTabela.innerHTML = "";
-  for (const lead of leads) {
+  for (const lead of leadsOrdenados) {
     const linha = document.createElement("tr");
     if (lead.aberto) linha.classList.add("aberto");
     if (lead.enviada) linha.classList.add("enviada");
@@ -204,15 +220,32 @@ function renderizarLeads(leads) {
       botoesAcao = botaoAbrir + botaoEnviar + botaoNaoEncontrado;
     }
 
+    const maps = lead.mapsUrl
+      ? `<a href="${escaparHtml(lead.mapsUrl)}" target="_blank" rel="noopener">Ver no Maps</a>`
+      : "-";
+    const instagram = lead.instagram
+      ? `<a href="${escaparHtml(formatarLinkInstagram(lead.instagram))}" target="_blank" rel="noopener">${escaparHtml(lead.instagram)}</a>`
+      : "-";
+
     linha.innerHTML = `
-      <td>${escaparHtml(lead.nome)}</td>
-      <td>${lead.telefone}</td>
-      <td>
+      <td data-label="Nome">${escaparHtml(lead.nome)}</td>
+      <td data-label="Telefone">${lead.telefone}</td>
+      <td data-label="Avaliações">${lead.avaliacoes || 0}</td>
+      <td data-label="Google Maps">${maps}</td>
+      <td data-label="Instagram">${instagram}</td>
+      <td data-label="Ação">
         ${botoesAcao}
       </td>
     `;
     corpoTabela.appendChild(linha);
   }
+}
+
+// Transforma "@nome" ou "nome" em link direto pro Instagram; deixa como está se já for uma URL
+function formatarLinkInstagram(valor) {
+  if (/^https?:\/\//i.test(valor)) return valor;
+  const usuario = valor.replace(/^@/, "");
+  return `https://instagram.com/${usuario}`;
 }
 
 // --- Ações (tudo local, sem chamada de rede) ---
