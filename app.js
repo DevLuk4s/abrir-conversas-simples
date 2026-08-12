@@ -57,6 +57,7 @@ function parseCSV(texto) {
 
 // Detecta as colunas relevantes, aceitando tanto o formato já convertido
 // (nome,telefone) quanto o bruto do Apify/Google Maps (title,phone,reviewsCount,url...)
+// e o formato do pipeline de prospecção (inclui Mensagem e Ângulo por lead)
 function detectarColunas(cabecalho) {
   const minusculo = cabecalho.map((h) => h.trim().toLowerCase());
   const idxNome = minusculo.findIndex((h) => h === "nome" || h === "title" || h === "name");
@@ -70,14 +71,24 @@ function detectarColunas(cabecalho) {
   const idxInstagram = minusculo.findIndex(
     (h) => h.includes("instagram") || h === "rede social" || h === "redesocial"
   );
-  return { idxNome, idxTelefone, idxAvaliacoes, idxUrl, idxInstagram };
+  const idxMensagem = minusculo.findIndex((h) => h === "mensagem");
+  const idxAngulo = minusculo.findIndex((h) => h === "ângulo" || h === "angulo");
+  const idxBairro = minusculo.findIndex(
+    (h) => h === "bairro/região" || h === "bairro" || h === "region"
+  );
+  const idxNota = minusculo.findIndex((h) => h === "nota");
+  return { idxNome, idxTelefone, idxAvaliacoes, idxUrl, idxInstagram, idxMensagem, idxAngulo, idxBairro, idxNota };
 }
 
 // Limpa o telefone e garante o código do Brasil (55) na frente
+// Números de 10-11 dígitos são tratados como BR local (ganham 55);
+// os demais (já com código de país) são mantidos como estão.
 function formatarTelefone(telefone) {
   let numeros = (telefone || "").replace(/\D/g, "");
   if (!numeros) return null;
-  if (!numeros.startsWith("55")) numeros = "55" + numeros;
+  if (numeros.startsWith("0")) numeros = numeros.slice(1); // 0 + DDD (convenção antiga)
+  if (numeros.startsWith("55")) return numeros;
+  if (numeros.length >= 10 && numeros.length <= 11) numeros = "55" + numeros;
   return numeros;
 }
 
@@ -127,7 +138,7 @@ function processarCSV(texto) {
   }
 
   const cabecalho = linhas[0];
-  const { idxNome, idxTelefone, idxAvaliacoes, idxUrl, idxInstagram } = detectarColunas(cabecalho);
+  const { idxNome, idxTelefone, idxAvaliacoes, idxUrl, idxInstagram, idxMensagem, idxAngulo, idxBairro, idxNota } = detectarColunas(cabecalho);
   if (idxNome === -1 || idxTelefone === -1) {
     textoUpload.textContent = "Erro: não encontrei colunas de nome/telefone (esperado: nome,telefone ou title,phone)";
     return;
@@ -141,11 +152,14 @@ function processarCSV(texto) {
   }
 
   const leads = [];
+  const telefonesVistos = new Set();
   for (let i = 1; i < linhas.length; i++) {
     const linha = linhas[i];
     const nome = (linha[idxNome] || "").trim();
     const telefoneFormatado = formatarTelefone(linha[idxTelefone]);
     if (!nome || !telefoneFormatado) continue;
+    if (telefonesVistos.has(telefoneFormatado)) continue; // dedup: mesmo telefone 1x só
+    telefonesVistos.add(telefoneFormatado);
 
     const antigo = statusAntigoPorTelefone[telefoneFormatado];
     const avaliacoes = idxAvaliacoes !== -1 ? parseInt((linha[idxAvaliacoes] || "0").replace(/\D/g, ""), 10) || 0 : 0;
@@ -159,6 +173,10 @@ function processarCSV(texto) {
       avaliacoes,
       mapsUrl,
       instagram,
+      mensagem: idxMensagem !== -1 ? (linha[idxMensagem] || "").trim() || null : null,
+      angulo: idxAngulo !== -1 ? (linha[idxAngulo] || "").trim() || null : null,
+      bairroRegiao: idxBairro !== -1 ? (linha[idxBairro] || "").trim() || null : null,
+      nota: idxNota !== -1 ? (linha[idxNota] || "").trim() || null : null,
       aberto: antigo ? antigo.aberto : false,
       abertoEm: antigo ? antigo.abertoEm : null,
       enviada: antigo ? antigo.enviada : false,
@@ -189,8 +207,11 @@ function renderizarLeads(leads) {
   const enviados = leads.filter((l) => l.enviada).length;
   contador.textContent = `${abertos} de ${leads.length} conversas abertas · ${enviados} mensagens marcadas como enviadas`;
 
-  // Mostra sempre do mais avaliado pro menos avaliado, sem alterar a ordem salva
-  const leadsOrdenados = leads.slice().sort((a, b) => (b.avaliacoes || 0) - (a.avaliacoes || 0));
+  // Mostra sempre do mais bem avaliado pro menos, sem alterar a ordem salva
+  const notaNum = (l) => parseFloat((l.nota || "").replace(",", ".")) || 0;
+  const leadsOrdenados = leads
+    .slice()
+    .sort((a, b) => notaNum(b) - notaNum(a) || (b.avaliacoes || 0) - (a.avaliacoes || 0));
 
   corpoTabela.innerHTML = "";
   for (const lead of leadsOrdenados) {
@@ -205,7 +226,7 @@ function renderizarLeads(leads) {
     } else {
       const botaoAbrir = lead.enviada
         ? ""
-        : `<button onclick="abrirConversa('${lead.id}')">
+        : `<button onclick="abrirConversaModal('${lead.id}')">
              ${lead.aberto ? "Reabrir conversa" : "Abrir conversa"}
            </button>`;
 
@@ -226,10 +247,14 @@ function renderizarLeads(leads) {
     const instagram = lead.instagram
       ? `<a href="${escaparHtml(formatarLinkInstagram(lead.instagram))}" target="_blank" rel="noopener">${escaparHtml(lead.instagram)}</a>`
       : "-";
+    const nota = lead.nota ? escaparHtml(lead.nota) : "-";
+    const bairro = lead.bairroRegiao ? escaparHtml(lead.bairroRegiao) : "-";
 
     linha.innerHTML = `
-      <td data-label="Nome">${escaparHtml(lead.nome)}</td>
+      <td data-label="Nome">${escaparHtml(lead.nome)}${lead.angulo ? `<div class="angulo">${escaparHtml(lead.angulo)}</div>` : ""}</td>
+      <td data-label="Bairro/Região">${bairro}</td>
       <td data-label="Telefone">${lead.telefone}</td>
+      <td data-label="Nota">${nota}</td>
       <td data-label="Avaliações">${lead.avaliacoes || 0}</td>
       <td data-label="Google Maps">${maps}</td>
       <td data-label="Instagram">${instagram}</td>
@@ -258,17 +283,44 @@ function atualizarLead(id, campos) {
   renderizarLeads(leads);
 }
 
-function abrirConversa(id) {
+// --- Modal de mensagem: prévia/edição antes de abrir o WhatsApp ---
+const modal = document.getElementById("modalMensagem");
+const modalTitulo = document.getElementById("modalTitulo");
+const modalMsg = document.getElementById("modalMsg");
+const modalBtn = document.getElementById("modalBtnAbrir");
+const modalBtnFechar = document.getElementById("modalBtnFechar");
+
+function abrirConversaModal(id) {
   const lead = lerLeads().find((l) => l.id === id);
   if (!lead) return;
-
-  const modelo = modeloMensagem.value || MODELO_PADRAO;
-  const mensagem = modelo.replace(/{NOME}/g, lead.nome);
-  const link = `https://wa.me/${lead.telefone}?text=${encodeURIComponent(mensagem)}`;
-
-  window.open(link, "_blank");
-  atualizarLead(id, { aberto: true, abertoEm: new Date().toISOString() });
+  modalMsg.value = lead.mensagem || (modeloMensagem.value || MODELO_PADRAO);
+  modalTitulo.textContent = `Conversa com ${lead.nome}`;
+  modalBtn.dataset.id = id;
+  if (typeof modal.showModal === "function") modal.showModal();
+  else modal.setAttribute("open", "");
+  modalMsg.focus();
 }
+
+function fecharModal() {
+  if (typeof modal.close === "function") modal.close();
+  else modal.removeAttribute("open");
+}
+
+modalBtn.addEventListener("click", () => {
+  const lead = lerLeads().find((l) => l.id === modalBtn.dataset.id);
+  if (!lead) return;
+  const mensagem = modalMsg.value
+    .replace(/{NOME}/g, lead.nome)
+    .replace(/{NOME_CURTO}/g, lead.nome);
+  const link = `https://wa.me/${lead.telefone}?text=${encodeURIComponent(mensagem)}`;
+  window.open(link, "_blank");
+  fecharModal();
+  atualizarLead(lead.id, { aberto: true, abertoEm: new Date().toISOString() });
+});
+modalBtnFechar.addEventListener("click", fecharModal);
+modal.addEventListener("click", (e) => {
+  if (e.target === modal) fecharModal();
+});
 
 function enviarConversa(id) {
   atualizarLead(id, { enviada: true, enviadaEm: new Date().toISOString() });
