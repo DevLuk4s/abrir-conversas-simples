@@ -407,3 +407,166 @@ function exportarBackup() {
 
 // Carrega o que já tiver salvo assim que a página abre
 renderizarLeads(lerLeads());
+
+// --- Disparo em fila (abre cada conversa em sequência, com intervalo) ---
+const disparoProgressEl = document.getElementById("disparoProgresso");
+const btnDisparar = document.getElementById("btnDisparar");
+const btnPausar = document.getElementById("btnPausar");
+const intervaloDisparoEl = document.getElementById("intervaloDisparo");
+
+const CHAVE_DISPARO_STATS = "abrirConversasDisparoStats";
+const CHAVE_INTERVALO = "abrirConversasIntervaloDisparo";
+
+intervaloDisparoEl.value = localStorage.getItem(CHAVE_INTERVALO) || intervaloDisparoEl.value;
+intervaloDisparoEl.addEventListener("change", () => {
+  localStorage.setItem(CHAVE_INTERVALO, intervaloDisparoEl.value);
+});
+
+let disparoTimer = null;
+let disparoFila = []; // índices em lerLeads() que ainda faltam
+let disparoRodando = false;
+
+function leadsDisponiveisParaDisparo() {
+  return lerLeads().filter((l) => !l.enviada && !l.naoEncontrado);
+}
+
+function lerStatsDisparo() {
+  try { return JSON.parse(localStorage.getItem(CHAVE_DISPARO_STATS) || "{}"); }
+  catch (e) { return {}; }
+}
+function salvarStatsDisparo(stats) {
+  localStorage.setItem(CHAVE_DISPARO_STATS, JSON.stringify(stats));
+}
+
+function atualizarProgresso(mensagem, disparando) {
+  disparoProgressEl.textContent = mensagem;
+  disparoProgressEl.classList.toggle("disparando", !!disparando);
+  if (!disparando) {
+    btnDisparar.style.display = "inline-block";
+    btnPausar.style.display = "none";
+  } else {
+    btnDisparar.style.display = "none";
+    btnPausar.style.display = "inline-block";
+  }
+}
+
+function iniciarDisparo() {
+  if (disparoRodando) return;
+  const stats = lerStatsDisparo();
+  if (stats.fila && stats.fila.length && (stats.enviados || 0) < stats.total) {
+    retomarDisparo();
+    return;
+  }
+  const pendentes = leadsDisponiveisParaDisparo();
+  if (pendentes.length === 0) {
+    atualizarProgresso("Nenhum lead pendente pra disparar (todos enviados ou inválidos).", false);
+    return;
+  }
+  disparoFila = pendentes.map((l) => l.id);
+  disparoRodando = true;
+  stats.total = disparoFila.length;
+  stats.enviados = 0;
+  stats.iniciadoEm = new Date().toISOString();
+  stats.fila = disparoFila.slice();
+  salvarStatsDisparo(stats);
+  atualizarProgresso(`Disparando... 0 de ${disparoFila.length}`, true);
+  processarProximoDisparo();
+}
+
+function pausarDisparo() {
+  disparoRodando = false;
+  if (disparoTimer) { clearTimeout(disparoTimer); disparoTimer = null; }
+  const stats = lerStatsDisparo();
+  const total = stats.total || disparoFila.length;
+  stats.fila = disparoFila.slice();
+  salvarStatsDisparo(stats);
+  atualizarProgresso(`Pausado em ${stats.enviados || 0} de ${total}.`, false);
+}
+
+function retomarDisparo() {
+  if (disparoRodando) return;
+  const stats = lerStatsDisparo();
+  if (!stats.fila || !stats.fila.length) {
+    atualizarProgresso("Nada pra retomar. Inicie um novo disparo.", false);
+    return;
+  }
+  const leads = lerLeads();
+  disparoFila = stats.fila.filter((id) => {
+    const l = leads.find((x) => x.id === id);
+    return l && !l.enviada && !l.naoEncontrado;
+  });
+  if (!disparoFila.length) {
+    atualizarProgresso("Tudo já foi enviado desde a última pausa.", false);
+    return;
+  }
+  stats.total = stats.total || (stats.enviados || 0) + disparoFila.length;
+  salvarStatsDisparo(stats);
+  disparoRodando = true;
+  atualizarProgresso(`Retomando... ${stats.enviados || 0} de ${stats.total} feitos.`, true);
+  processarProximoDisparo();
+}
+
+function processarProximoDisparo() {
+  if (!disparoRodando) return;
+  if (disparoFila.length === 0) {
+    disparoRodando = false;
+    const stats = lerStatsDisparo();
+    atualizarProgresso(`Disparo concluído: ${stats.enviados || 0} conversas abertas.`, false);
+    return;
+  }
+  const stats = lerStatsDisparo();
+  const total = stats.total || disparoFila.length;
+  const feitos = stats.enviados || 0;
+  atualizarProgresso(`Disparando... ${feitos} de ${total} abertos. Próximo: ${nomeProximo()}`, true);
+
+  const id = disparoFila[0];
+  const leads = lerLeads();
+  const lead = leads.find((l) => l.id === id);
+
+  if (!lead || lead.enviada || lead.naoEncontrado) {
+    disparoFila.shift();
+    disparoTimer = setTimeout(processarProximoDisparo, 200);
+    return;
+  }
+
+  const mensagem = (lead.mensagem || modeloMensagem.value || MODELO_PADRAO)
+    .replace(/{NOME}/g, lead.nome)
+    .replace(/{NOME_CURTO}/g, lead.nome);
+  const link = `https://wa.me/${lead.telefone}?text=${encodeURIComponent(mensagem)}`;
+  window.open(link, "_blank");
+
+  Object.assign(lead, { aberto: true, abertoEm: new Date().toISOString() });
+  salvarLeads(leads);
+
+  disparoFila.shift();
+  stats.enviados = (stats.enviados || 0) + 1;
+  salvarStatsDisparo(stats);
+  renderizarLeads(leads);
+
+  if (disparoFila.length === 0) {
+    disparoRodando = false;
+    atualizarProgresso(`Disparo concluído: ${stats.enviados} conversas abertas.`, false);
+    return;
+  }
+  const intervaloMs = Math.max(3, parseInt(intervaloDisparoEl.value, 10) || 15) * 1000;
+  disparoTimer = setTimeout(processarProximoDisparo, intervaloMs);
+}
+
+function nomeProximo() {
+  const id = disparoFila[0];
+  if (!id) return "?";
+  const lead = lerLeads().find((l) => l.id === id);
+  return lead ? lead.nome : "?";
+}
+
+// Restaura aviso de pausa/conclusão ao recarregar a página
+(function restaurarDisparo() {
+  const stats = lerStatsDisparo();
+  if (stats.fila && stats.fila.length && (stats.enviados || 0) < stats.total) {
+    atualizarProgresso(`Disparo pausado em ${stats.enviados || 0} de ${stats.total}. Clique em "Disparar fila" pra retomar.`, false);
+  } else if (stats.enviados && stats.total && stats.enviados >= stats.total) {
+    atualizarProgresso(`Disparo anterior concluído: ${stats.enviados} conversas.`, false);
+  } else {
+    atualizarProgresso("Pronto pra disparar.", false);
+  }
+})();

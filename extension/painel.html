@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Abrir Conversas - Painel</title>
+<link rel="stylesheet" href="painel.css" />
+</head>
+<body>
+
+<h1>Abrir Conversas <span class="sub">Painel de prospecção</span></h1>
+
+<div class="aviso" id="avisoPainel">
+  Abra o painel e o WhatsApp Web numa aba própria. O disparo automático roda a partir
+  desta aba — mantenha-a ativa enquanto dispara. Todos os dados ficam salvos no
+  <code>chrome.storage</code> deste navegador.
+</div>
+
+<section class="card">
+  <label class="rotulo">
+    Modelo de mensagem (usado quando o CSV não tiver coluna "Mensagem"; use {NOME})
+  </label>
+  <textarea id="modeloMensagem" rows="3" placeholder="Oi! Vi que a {NOME} não tem site próprio ainda..."></textarea>
+</section>
+
+<section class="card" id="secaoDados">
+  <div class="upload-area" id="areaUpload">
+    <div id="textoUpload">Escolha o CSV (dump do crawler ou do pipeline) ou arraste aqui</div>
+    <input type="file" id="inputCsv" accept=".csv" />
+  </div>
+  <div class="acoes-dados">
+    <button id="btnGerarMensagens" class="gerar" style="display:none">Gerar mensagens automáticas</button>
+    <span class="hint" id="hintGerar" style="display:none">Formato bruto detectado: gere as mensagens com o pipeline no navegador.</span>
+    <button class="exportar" id="btnExportar">Exportar backup</button>
+    <label class="upload-pequeno">
+      Importar backup
+      <input type="file" id="inputImportar" accept=".json" style="display:none" />
+    </label>
+    <button class="limpar" id="btnLimpar">Limpar lista</button>
+  </div>
+  <div class="contador" id="contador"></div>
+</section>
+
+<section class="card" id="secaoDisparo">
+  <h2>Disparo automático</h2>
+
+  <div class="grid-config">
+    <div class="campo">
+      <label class="rotulo">Perfil de segurança</label>
+      <select id="cfgPerfil">
+        <option value="conservador">Conservador (recomendado)</option>
+        <option value="moderado">Moderado</option>
+        <option value="livre">Livre</option>
+      </select>
+      <div class="hint">Define os limites padrão abaixo. Conservador = o mais seguro contra ban.</div>
+    </div>
+
+    <div class="campo">
+      <label class="rotulo">Intervalo entre envios (s)</label>
+      <div class="dupla">
+        <input type="number" id="cfgIntervaloMin" min="10" max="600" />
+        <span>até</span>
+        <input type="number" id="cfgIntervaloMax" min="10" max="600" />
+      </div>
+      <div class="hint">Sorteado de forma humana (concentrado no meio), não uniforme.</div>
+    </div>
+
+    <div class="campo">
+      <label class="rotulo">Limite diário</label>
+      <input type="number" id="cfgLimiteDiario" min="1" max="500" />
+      <div class="hint">Teto de envios hoje (aquecimento reduz automaticamente nos primeiros dias).</div>
+    </div>
+
+    <div class="campo">
+      <label class="rotulo">Limite semanal</label>
+      <input type="number" id="cfgLimiteSemanal" min="1" max="3000" />
+    </div>
+
+    <div class="campo">
+      <label class="rotulo">Janela de horário</label>
+      <div class="dupla">
+        <input type="time" id="cfgJanelaInicio" />
+        <span>até</span>
+        <input type="time" id="cfgJanelaFim" />
+      </div>
+    </div>
+
+    <div class="campo">
+      <label class="rotulo">
+        <input type="checkbox" id="cfgPausaAlmoco" /> Pausa de almoço
+      </label>
+      <div class="dupla">
+        <input type="time" id="cfgAlmocoInicio" />
+        <span>até</span>
+        <input type="time" id="cfgAlmocoFim" />
+      </div>
+    </div>
+
+    <div class="campo">
+      <label class="rotulo">
+        <input type="checkbox" id="cfgPausaAuto" /> Pausa automática
+      </label>
+      <div class="dupla">
+        a cada
+        <input type="number" id="cfgPausaCada" min="1" max="100" style="width:60px" />
+        <span>envios, por</span>
+        <input type="number" id="cfgPausaMin" min="1" max="120" style="width:60px" />
+        <span>a</span>
+        <input type="number" id="cfgPausaMax" min="1" max="120" style="width:60px" />
+        <span>min</span>
+      </div>
+    </div>
+
+    <div class="campo">
+      <label class="rotulo"><input type="checkbox" id="cfgEmbaralhar" /> Embaralhar fila</label>
+      <div class="hint">Evita sequências óbvias (ex: todos os 5 estrelas primeiro).</div>
+    </div>
+
+    <div class="campo">
+      <label class="rotulo"><input type="checkbox" id="cfgSimularDigitacao" /> Simular digitação</label>
+      <div class="hint">Digita a mensagem caractere a caractere dentro do WhatsApp Web.</div>
+    </div>
+
+    <div class="campo">
+      <label class="rotulo"><input type="checkbox" id="cfgAquecimento" /> Aquecimento progressivo</label>
+      <div class="hint">Número novo começa com poucos envios/dia e aumenta aos poucos.</div>
+    </div>
+  </div>
+
+  <div class="barra-botoes">
+    <button id="btnTestar" class="testar">Testar conexão WhatsApp</button>
+    <button id="btnDisparar" class="disparar">Disparar fila</button>
+    <button id="btnPausar" class="pausar" style="display:none">Pausar</button>
+    <button id="btnRetomar" class="retomar" style="display:none">Retomar</button>
+    <button id="btnParar" class="parar" style="display:none">Parar</button>
+    <button id="btnEmergencia" class="emergencia" style="display:none">EMERGÊNCIA</button>
+  </div>
+
+  <div class="progresso" id="disparoProgresso">Pronto pra disparar.</div>
+
+  <div class="stats" id="statsLinha"></div>
+
+  <details id="logBox">
+    <summary>Log de envios</summary>
+    <div id="logConteudo" class="log"></div>
+  </details>
+</section>
+
+<table id="tabela" style="display:none">
+  <thead>
+    <tr>
+      <th>Nome</th>
+      <th>Bairro/Região</th>
+      <th>Telefone</th>
+      <th>Nota</th>
+      <th>Avaliações</th>
+      <th>Google Maps</th>
+      <th>Instagram</th>
+      <th>Mensagem</th>
+      <th>Ação</th>
+    </tr>
+  </thead>
+  <tbody id="corpoTabela"></tbody>
+</table>
+
+<div class="vazio" id="vazio">Nenhum lead carregado ainda. Suba um CSV acima.</div>
+
+<dialog id="modalMensagem">
+  <h3 id="modalTitulo">Conversa</h3>
+  <div class="hint">Edite se precisar e abra o WhatsApp manualmente (modo de emergência/fallback).</div>
+  <textarea id="modalMsg" rows="5"></textarea>
+  <div class="botoes">
+    <button class="fechar" id="modalBtnFechar">Cancelar</button>
+    <button id="modalBtnAbrir">Abrir WhatsApp</button>
+  </div>
+</dialog>
+
+<script src="pipeline.js"></script>
+<script src="painel.js"></script>
+</body>
+</html>

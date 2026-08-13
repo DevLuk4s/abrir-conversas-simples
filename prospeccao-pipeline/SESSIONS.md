@@ -136,10 +136,28 @@ e amplie os pools** (especialmente `credibilidade` e `basica`, os mais usados).
 
 ## Próximos passos (em ordem)
 
-1. Commit das alterações no git (ainda NADA foi commitado — revisar `git status` antes).
+1. Commit das alterações no git (revisar `git status` antes).
 2. Revisão manual de um sample de mensagens por ângulo (tom/CTA).
 3. Se processar mais CSVs: conferir pools de ângulos antes (regra das demandas acima),
    e lembrar de rodar `validar.js` sobre cada saída.
+
+## Decisão: extensão Chrome (2026-08-13)
+
+O projeto vai ganhar uma extensão Chrome (Manifest V3) reaproveitando toda a lógica atual:
+
+- **Painel em aba própria** — porta do `app.js`/`index.html` (storage → `chrome.storage.local`).
+- **Disparo automático** no `web.whatsapp.com` via content script (`sendOne`): busca o número,
+  digita (simulado) e envia. Selectors resilientes + fallbacks.
+- **Pipeline no navegador** — `processar.js` portado (`pipeline.js`): botão "Gerar mensagens"
+  para CSV bruto do crawler.
+- **Camada anti-ban humanizada** (padrão Conservador): aquecimento progressivo do número,
+  janela de horário 9h–18h com pausa de almoço, intervalo aleatório humano (45–120s),
+  pausas automáticas e imprevisíveis, limites diário/semanal, fila embaralhada,
+  log com horários e botão de emergência.
+
+Estrutura planejada em `extension/` (`manifest.json`, `background.js`, `painel.html/css/js`,
+`pipeline.js`, `content-whatsapp.js`, `icons/`). Documentação: `README.md` na raiz e
+`prospeccao-pipeline/README.md`.
 
 ## Toques finos conhecidos
 

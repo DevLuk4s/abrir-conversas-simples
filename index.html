@@ -75,6 +75,26 @@
   dialog .botoes { text-align: right; }
   dialog .botoes button { margin: 0 0 0 8px; }
   .fechar-modal { background: #999; }
+  .disparo-painel {
+    background: #fff;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin: 12px 0 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    border: 1px solid #eee;
+  }
+  .disparo-painel button { margin: 0; }
+  #btnDisparar { background: #ff6b35; }
+  #btnPausar { background: #888; }
+  .intervalo-label { font-size: 13px; color: #555; display: flex; align-items: center; gap: 4px; }
+  #intervaloDisparo { width: 56px; padding: 4px 6px; border-radius: 6px; border: 1px solid #ccc; font-size: 13px; }
+  .disparo-progresso {
+    flex: 1; min-width: 200px; font-size: 13px; color: #555;
+  }
+  .disparo-progresso.disparando { color: #ff6b35; font-weight: 600; }
   .aviso {
     background: #fff8e1;
     border: 1px solid #ffe082;
@@ -123,6 +143,15 @@
 <button class="limpar" onclick="limparLista()">Limpar lista</button>
 <button class="exportar" onclick="exportarBackup()">Exportar backup</button>
 <div class="contador" id="contador"></div>
+
+<div class="disparo-painel" id="disparoPainel">
+  <button id="btnDisparar" onclick="iniciarDisparo()">Disparar fila</button>
+  <button id="btnPausar" onclick="pausarDisparo()" style="display:none">Pausar</button>
+  <label class="intervalo-label">Intervalo (s):
+    <input type="number" id="intervaloDisparo" min="3" max="120" value="15" />
+  </label>
+  <div class="disparo-progresso" id="disparoProgresso">Pronto pra disparar.</div>
+</div>
 
 <table id="tabela" style="display:none">
   <thead>
