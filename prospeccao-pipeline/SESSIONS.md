@@ -1,7 +1,7 @@
 # Prospecção — Documentação de Estado (SESSIONS)
 
 > Mantenha este arquivo atualizado. Ele é o ponto de retomada caso a sessão estoure o limite.
-> Última atualização: 2026-08-12
+> Última atualização: 2026-08-13
 
 ## O que o projeto faz
 
@@ -123,41 +123,65 @@ e amplie os pools** (especialmente `credibilidade` e `basica`, os mais usados).
    Cuidado com o helper `valor()`: indexa com `r[col[c]]` (nome -> índice), não `r[c]`.
 7. **validar.js crash com nota ausente** — `notesAusentes` não era declarada;
    linha removida (a contagem não era mais usada).
+8. **"nota nota máxima"** nas mensagens de credibilidade — template dizia literalmente
+   `" Vi a nota {NOTA_TXT}..."` e `NOTA_TXT` expande para "nota máxima"; corrigido para
+   `" Vi a {NOTA_TXT}..."`.
+9. **Nomes sujos do crawler** (categorias/keywords concatenadas) — `nomeCurto` agora
+   corta no primeiro `|`, remove caudas `- em/no/na <lugar>`, `- Unidade/Shopping/<cidade>`
+   e sufixos de categoria (barbearia, salão, centro de beleza, micropigmentação, pet shop,
+   banho e tosa, etc.). A coluna **Nome** da saída passou a gravar o nome limpo
+   (`nomeCurto`), coerente com a saudação da mensagem e com a deduplicação.
+10. **`extension/testes/paridade-pipeline.js`** — teste de paridade entre
+    `extension/pipeline.js` e `processar.js` (recommitado; havia ficado de fora do
+    commit da extensão).
 
-## Estado atual (2026-08-12)
+## Estado atual (2026-08-13)
 
 - [x] petshop → 99 leads, Tudo OK
 - [x] loja de roupas → 92 leads, Tudo OK
 - [x] barbearia → 505 leads, Tudo OK
 - [x] clinica estetica SP → 50 leads, Tudo OK
-- [x] santa catarina (formato limpo) → 737 leads, Tudo OK
+- [x] santa catarina (formato limpo) → 738 leads, Tudo OK
 - [x] lixo do diretório de leads movido para `arquivo/`
 - [x] documentação (este arquivo)
+- [x] extensão Chrome implementada e commitada (`extension/`) — ver seção abaixo
+- [x] teste de paridade `pipeline.js` ↔ `processar.js` passando
+- [x] todos os outputs revalidados (Tudo OK em todos)
 
 ## Próximos passos (em ordem)
 
-1. Commit das alterações no git (revisar `git status` antes).
-2. Revisão manual de um sample de mensagens por ângulo (tom/CTA).
-3. Se processar mais CSVs: conferir pools de ângulos antes (regra das demandas acima),
+1. Revisão manual de um sample de mensagens por ângulo (tom/CTA) —
+   sample em `prospeccao-pipeline/output/_revisao_mensagens.md`.
+   (Revisão feita em 2026-08-13: bugs de "nota nota" e nomes sujos encontrados e corrigidos;
+   seguir conferindo tom/CTA.)
+2. Se processar mais CSVs: conferir pools de ângulos antes (regra das demandas acima),
    e lembrar de rodar `validar.js` sobre cada saída.
 
-## Decisão: extensão Chrome (2026-08-13)
+## Decisão: extensão Chrome (2026-08-13) — IMPLEMENTADA
 
-O projeto vai ganhar uma extensão Chrome (Manifest V3) reaproveitando toda a lógica atual:
+A extensão Chrome (Manifest V3) reaproveitando toda a lógica do pipeline está **pronta e
+commitada** (`847a95d`) em `extension/`:
 
 - **Painel em aba própria** — porta do `app.js`/`index.html` (storage → `chrome.storage.local`).
 - **Disparo automático** no `web.whatsapp.com` via content script (`sendOne`): busca o número,
-  digita (simulado) e envia. Selectors resilientes + fallbacks.
+  digita (simulado) e envia. Selectors resilientes + fallbacks; confirmação por compose vazio
+  ou texto no painel de mensagens.
 - **Pipeline no navegador** — `processar.js` portado (`pipeline.js`): botão "Gerar mensagens"
-  para CSV bruto do crawler.
+  para CSV bruto do crawler. Paridade garantida por teste (`extension/testes/paridade-pipeline.js`).
 - **Camada anti-ban humanizada** (padrão Conservador): aquecimento progressivo do número,
   janela de horário 9h–18h com pausa de almoço, intervalo aleatório humano (45–120s),
   pausas automáticas e imprevisíveis, limites diário/semanal, fila embaralhada,
   log com horários e botão de emergência.
+- `protocolo.js` — constantes compartilhadas de mensagens/storage (manifest, background e painel).
 
-Estrutura planejada em `extension/` (`manifest.json`, `background.js`, `painel.html/css/js`,
-`pipeline.js`, `content-whatsapp.js`, `icons/`). Documentação: `README.md` na raiz e
-`prospeccao-pipeline/README.md`.
+Correções notáveis aplicadas durante a implementação: CSP (delegação de eventos no painel),
+dupla injeção do content script (aguarda página `complete`), confirmação de envio não-falsa,
+escopo do detector de número inválido no header, resume com contador correto, janela noturna,
+CSV com `;`, re-render parcial da tabela, `urlSegura()` contra `javascript:`.
+
+Estrutura: `extension/` (`manifest.json`, `background.js`, `painel.html/css/js`, `pipeline.js`,
+`protocolo.js`, `content-whatsapp.js`, `icons/`, `testes/paridade-pipeline.js`). Documentação:
+`README.md` na raiz e `prospeccao-pipeline/README.md`.
 
 ## Toques finos conhecidos
 

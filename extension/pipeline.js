@@ -63,7 +63,7 @@
         " O Google mostra a loja de vocês{EM_BAIRRO} com {NOTA_TXT}, mas são poucas avaliações — e quem ainda não conhece procura prova antes de chamar.",
         " A {NOTA_TXT}{EM_BAIRRO} não bate com o número de avaliações — merecia aparecer mais pra quem pesquisa.",
         " Encontrei o perfil de vocês{EM_BAIRRO} com {NOTA_TXT}, mas com tão poucas avaliações que a nota acaba não pesando na escolha.",
-        " Vi a nota {NOTA_TXT}{EM_BAIRRO} no perfil de vocês, mas com tão poucas avaliações que ela ainda nem aparece direito no Google.",
+        " Vi a {NOTA_TXT}{EM_BAIRRO} no perfil de vocês, mas com tão poucas avaliações que ela ainda nem aparece direito no Google.",
         " O perfil de vocês{EM_BAIRRO} acumula {NOTA_TXT}, mas são poucas avaliações pra transformar isso em confiança na busca.",
         " {NOTA_TXT}{EM_BAIRRO} é um belo cartão de visita — só falta gente pra confirmar isso publicamente no Google.",
       ],
@@ -189,13 +189,20 @@
   function nomeCurto(nome) {
     let n = (nome || "").trim();
     if (!n) return "";
+    // separadores de metadados do crawler: fica só o primeiro segmento antes de "|"
+    n = n.split(/\s*\|\s*/)[0].trim();
     n = n.replace(/\s+(?:rua|r\.|avenida|av\.|estrada|alameda|praça|travessa|box|rodovia|ladeira)\s+\S+\s*\d+.*$/i, "");
     n = n.replace(/\s+bairro\s+\S+.*$/i, "");
-    n = n.replace(/\s*\([^)]*(?:loja|moda|roupa|atacado|barreiro|guarani|bh|mg|unidade|bairro)[^)]*\)\s*$/i, "");
+    n = n.replace(/\s*\([^)]*(?:loja|moda|roupa|atacado|barreiro|guarani|bh|mg|unidade|bairro|pet|veterin|banho|tosa|vacina|cl[íi]nica|ra[çc][ãa]o|hospedagem|dog\s*walker)[^)]*\)\s*$/i, "");
     n = n.replace(/[,\u2013-]\s*(?=(?:Loja|Atacadista|Butique|Boutique|Distribuidor|Conserto|Roupa|Roupas|Moda|Acessórios|Calçados|Brechó|Modinha|Feminin[oa]|Masculin[oa]|Infantil|Evangélica|Praia|Fitness|Presente|Lingerie|Vestuário))\S.*$/i, "");
     n = n.replace(/\s+(?:Loja\s+de\s+[A-ZÁ-ÚÀ-Ù]|Loja\s+[a-zá-úà-ù]{2,}|Atacadista|Distribuidor|Modinha|Presente\b).*$/i, "");
     n = n.replace(/\s*[\-\u2013]\s*(?:Loja|Moda|Roupa|Roupas|Atacad|Butique|Boutique|Distribuidor|Conserto|Praia|Fitness|Acessórios|Calçados|Brechó|Evangélic[ao]|Plus\s*Size|Modinha|Lingerie).*$/i, "");
     n = n.replace(/\s*[\-\u2013]\s*[A-ZÁ-ÚÀ-Ù][\wá-úà-ù ]*\/?[A-Z]{2,4}$/, "");
+    // cauda de localização/keyword usada pelo crawler (em/no/na + lugar, unidade, shopping, cidade)
+    n = n.replace(/\s*[,\u2013\-:]\s*(?:em\s+|no\s+|na\s+)\S.*$/i, "");
+    n = n.replace(/\s*[,\u2013-]\s*(?:Unidade\b|Shopping\b|Salvador\b).*$/i, "");
+    // cauda de categoria/categoria-chave após separador
+    n = n.replace(/\s*[,\u2013-]\s*(?:Barbearia\b|Barber\b|Barbershop\b|Sal[ãa]o\b|Centro\s*De\s*Beleza\b|Studio\s*De\s*Beleza\b|Est[úu]dio\s*De\s*Beleza\b|Cabeleireir[oa]\b|Cabelereir[oa]\b|Beleza\s*E\s*Est[ée]tica\b|Micropigmenta[çc][ãa]o\b|Despigmenta[çc][ãa]o\b|Sobrancelha\b|Tatuagem\b|Cortes\b|Pr[óo]tese\s*Capilar\b|Terapia\s*Capilar\b|Capilar\b|Alisamento\b|Dog\s*Walker\b|Banho\s*E\s*Tosa\b|Pet\s*Shop\b|Veterin[áa]ri[oa]\b|Cl[íi]nica\s*Veterin[áa]ria\b|Hospital\s*Veterin[áa]rio\b|Ra[çc][õo]es\b|Acess[óo]rios\b|Hair\s*Dresser\b).*$/i, "");
     n = n.replace(/\s+/g, " ").trim();
     return n.length >= 3 ? n : (nome || "").trim();
   }
@@ -373,6 +380,7 @@
 
     leadsFinal.sort((a, b) => b.notaNum - a.notaNum || b.avalNum - a.avalNum);
     for (const l of leadsFinal) l.mensagem = montarMensagem(l.chave, l);
+    for (const l of leadsFinal) l.nome = l.nomeCurto;
 
     return leadsFinal;
   }

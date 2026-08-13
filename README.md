@@ -64,9 +64,17 @@ node validar.js output/<segmento>_leads_prospeccao.csv
 
 O validador deve imprimir `Tudo OK.` e sair com código 0. Detalhes completos do fluxo em [`prospeccao-pipeline/README.md`](prospeccao-pipeline/README.md) e [`prospeccao-pipeline/SESSIONS.md`](prospeccao-pipeline/SESSIONS.md).
 
+## Extensão Chrome (implementada)
+
+`extension/` — extensão Manifest V3 que roda o painel em aba própria e dispara direto no `web.whatsapp.com`:
+
+- **Painel em aba própria** (`painel.html/css/js`) — mesmo fluxo do painel web, mas com `chrome.storage.local`.
+- **Disparo automático** (`content-whatsapp.js`) — content script busca o número, digita (simulado) e envia. Selectors resilientes + fallbacks; confirmação por compose vazio ou texto no painel de mensagens.
+- **Pipeline no navegador** (`pipeline.js`) — porta de `processar.js`, idêntico (teste de paridade em `extension/testes/paridade-pipeline.js`).
+- **Camada anti-ban humanizada** (padrão Conservador): aquecimento progressivo, janela de horário 9h–18h com pausa de almoço, intervalo aleatório humano (45–120s), pausas automáticas e imprevisíveis, limites diário/semanal, fila embaralhada, log com horários e botão de emergência.
+- `protocolo.js` — constantes compartilhadas de mensagens/storage.
+
 ## Roadmap
 
-- **Extensão Chrome (Manifest V3)** — portar o painel para uma aba própria da extensão com:
-  - Disparo automático direto no `web.whatsapp.com` (content script busca o número, digita e envia).
-  - Camada anti-ban humanizada: aquecimento progressivo do número, janela de horário (9h–18h com pausa de almoço), intervalo aleatório humano, pausas automáticas e imprevisíveis, limites diário/semanal, fila embaralhada.
-  - Pipeline de mensagens rodando no navegador ("Gerar mensagens" para CSV bruto).
+- Revisão de tom/CTA das mensagens por ângulo (sample gerado em `prospeccao-pipeline/output/_revisao_mensagens.md`).
+- Mais segmentos: conferir pools de ângulos antes e rodar `validar.js` sobre cada saída.
