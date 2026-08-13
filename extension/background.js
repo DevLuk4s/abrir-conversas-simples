@@ -17,6 +17,17 @@ async function abrirPainel() {
   return nova.id;
 }
 
+let abrindoPainel = false;
+chrome.action.onClicked.addListener(() => {
+  if (abrindoPainel) return;
+  abrindoPainel = true;
+  abrirPainel()
+    .catch(console.error)
+    .finally(() => {
+      abrindoPainel = false;
+    });
+});
+
 // Espera a aba terminar de carregar antes de falar com o content script.
 function aguardarAbaCompleta(tabId, timeoutMs = 30000) {
   return new Promise((resolve) => {
@@ -39,42 +50,37 @@ function aguardarAbaCompleta(tabId, timeoutMs = 30000) {
     }, timeoutMs);
     chrome.tabs.onUpdated.addListener(onUpdated);
     // Se já estiver completa, resolve direto.
-    chrome.tabs.get(tabId).then((t) => {
-      if (t && t.status === "complete") {
-        cleanup();
-        resolve(true);
-      }
-    });
+    chrome.tabs.get(tabId)
+      .then((t) => {
+        if (t && t.status === "complete") {
+          cleanup();
+          resolve(true);
+        }
+      })
+      .catch(() => {});
   });
 }
 
 async function getWhatsAppTab() {
   let tabs = await chrome.tabs.query({ url: "https://web.whatsapp.com/*" });
   let tab = tabs.find((t) => t.url && t.url.startsWith("https://web.whatsapp.com/"));
-  const criou = !tab;
   if (!tab) {
     tab = await chrome.tabs.create({ url: "https://web.whatsapp.com/" });
+    // Garante o DOM pronto antes do PING/injeção (evita falso "content script não respondeu").
     await aguardarAbaCompleta(tab.id);
   }
   try {
     const resp = await chrome.tabs.sendMessage(tab.id, { action: AC_MSG.PING });
     if (!resp || !resp.ok) throw new Error("sem-resposta");
   } catch (e) {
-    // Se a página acabou de ser criada e ainda não está "complete", o content
-    // script do manifest vai injetar sozinho no document_idle. Não injetar aqui
-    // evita dupla injeção (e duplo envio da mesma mensagem).
-    if (criou && tab.status !== "complete") return tab.id;
+    // Sem content script na aba: injeta manualmente (a idempotência evita duplo envio).
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ["content-whatsapp.js"],
+      files: ["protocolo.js", "content-whatsapp.js"],
     });
   }
   return tab.id;
 }
-
-chrome.action.onClicked.addListener(() => {
-  abrirPainel().catch(console.error);
-});
 
 chrome.runtime.onInstalled.addListener((details) => {
   const versao = chrome.runtime.getManifest().version;
@@ -87,20 +93,10 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || !msg.action) return;
-  if (msg.action === AC_MSG.OPEN_PAINEL) {
-    abrirPainel()
-      .then((id) => sendResponse({ ok: true, tabId: id }))
-      .catch((e) => sendResponse({ ok: false, erro: String(e) }));
-    return true;
-  }
   if (msg.action === AC_MSG.GET_WHATSAPP_TAB) {
     getWhatsAppTab()
       .then((id) => sendResponse({ ok: true, tabId: id }))
       .catch((e) => sendResponse({ ok: false, erro: String(e) }));
     return true;
-  }
-  if (msg.action === AC_MSG.PING) {
-    sendResponse({ ok: true });
-    return;
   }
 });

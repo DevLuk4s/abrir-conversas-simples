@@ -3,7 +3,7 @@
   "name": "Abrir Conversas - Prospeccao WhatsApp",
   "version": "1.0.0",
   "description": "Painel de prospeccao com disparo automatico humanizado no WhatsApp Web.",
-  "permissions": ["storage", "tabs", "scripting", "unlimitedStorage"],
+  "permissions": ["storage", "scripting", "unlimitedStorage"],
   "host_permissions": ["https://web.whatsapp.com/*"],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"

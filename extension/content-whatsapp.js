@@ -9,8 +9,14 @@
 (() => {
   "use strict";
 
+  // Idempotência: se este script for injetado 2x (manifest + executeScript),
+  // evita listener duplicado (que causaria envio duplicado).
+  if (globalThis.__acContentScript) return;
+  globalThis.__acContentScript = true;
+
   const SLEEP = (ms) => new Promise((r) => setTimeout(r, ms));
   const TIMEOUT_GERAL_SEND_ONE = 90000;
+  let ocupado = false;
 
   const SELETORES = {
     login: [".landing-window", '[data-testid="qrcode"]'],
@@ -163,7 +169,7 @@
   }
 
   // Número não cadastrado no WhatsApp abre tela de "convidar" no header da conversa.
-  async function detectarNumeroInvalido() {
+  async function detectarNumeroInvalido(iteracoes = 20) {
     const padroes = [
       /não está disponível no whatsapp/i,
       /is not available on whatsapp/i,
@@ -171,7 +177,7 @@
       /send an invite/i,
       /convidar/i,
     ];
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < iteracoes; i++) {
       const header = primeiro(SELETORES.header);
       // Escopo restrito ao header da conversa ativa pra evitar falsos positivos
       // vindos de outras conversas na lista.
@@ -209,6 +215,12 @@
       await limparTudo();
       if (invalido) return { ok: false, erro: "numero-invalido" };
       return { ok: false, erro: "compose-nao-encontrado" };
+    }
+    // 4b. Algumas versões do WhatsApp mostram o compose mesmo na tela de convite
+    // (número não cadastrado): checagem curta (~1s) pra evitar falso "enviada".
+    if (await detectarNumeroInvalido(4)) {
+      await limparTudo();
+      return { ok: false, erro: "numero-invalido" };
     }
 
     // 5. Digitar a mensagem.
@@ -262,10 +274,23 @@
       return;
     }
     if (msg.action === AC_MSG.SEND_ONE) {
-      // Timeout global de segurança: se tudo travar, responde e não pendura o painel.
-      comTimeout(sendOne(msg), TIMEOUT_GERAL_SEND_ONE, "timeout-geral")
-        .then(sendResponse)
-        .catch((e) => sendResponse({ ok: false, erro: String(e) }));
+      if (ocupado) {
+        sendResponse({ ok: false, erro: "ocupado" });
+        return;
+      }
+      ocupado = true;
+      // Timeout proporcional ao tamanho da mensagem (nunca passa de 90s): se tudo
+      // travar, responde e não pendura o painel.
+      const ms = 20000 + (msg.mensagem ? msg.mensagem.length : 0) * 150;
+      comTimeout(sendOne(msg), Math.min(ms, TIMEOUT_GERAL_SEND_ONE), "timeout-geral")
+        .then((r) => {
+          ocupado = false;
+          sendResponse(r);
+        })
+        .catch((e) => {
+          ocupado = false;
+          sendResponse({ ok: false, erro: String(e) });
+        });
       return true; // resposta assíncrona
     }
   });

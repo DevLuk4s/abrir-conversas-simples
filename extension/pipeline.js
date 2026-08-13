@@ -385,5 +385,5 @@
     return leadsFinal;
   }
 
-  window.Pipeline = { processar, nomeCurto };
+  window.Pipeline = { processar };
 })();

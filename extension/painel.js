@@ -17,9 +17,6 @@
     async set(key, val) {
       await chrome.storage.local.set({ [key]: val });
     },
-    async remove(key) {
-      await chrome.storage.local.remove(key);
-    },
   };
 
   const PERFIS = {
@@ -302,6 +299,10 @@
 
   async function gerarMensagens() {
     if (!ultimosBrutos) return;
+    if (!window.Pipeline) {
+      atualizarProgresso("Pipeline não carregado. Recarregue a extensão.", "erro");
+      return;
+    }
     const pipelineLeads = window.Pipeline.processar(ultimosBrutos);
     const leads = await lerLeads();
     const porTelefone = new Map();
@@ -358,9 +359,9 @@
     tr.innerHTML = `
       <td data-label="Nome">${escaparHtml(lead.nome)}${lead.angulo ? `<div class="angulo">${escaparHtml(lead.angulo)}</div>` : ""}</td>
       <td data-label="Bairro/Região">${escaparHtml(lead.bairroRegiao || "-")}</td>
-      <td data-label="Telefone">${lead.telefone}</td>
+      <td data-label="Telefone">${escaparHtml(lead.telefone)}</td>
       <td data-label="Nota">${escaparHtml(lead.nota || "-")}</td>
-      <td data-label="Avaliações">${lead.avaliacoes || 0}</td>
+      <td data-label="Avaliações">${escaparHtml(String(lead.avaliacoes ?? 0))}</td>
       <td data-label="Google Maps">${maps}</td>
       <td data-label="Instagram">${insta}</td>
       <td data-label="Mensagem">${msg}</td>
@@ -397,8 +398,8 @@
 
   // Atualiza só a linha de um lead (usado no loop de disparo pra evitar
   // re-render de toda a tabela a cada envio).
-  async function atualizarLinha(id) {
-    const leads = await lerLeads();
+  async function atualizarLinha(id, leadsRef) {
+    const leads = leadsRef || await lerLeads();
     const lead = leads.find((l) => l.id === id);
     if (!lead) return;
     const existente = el.corpoTabela.querySelector(`tr[data-id="${id}"]`);
@@ -478,7 +479,13 @@
   }
 
   async function importarBackup(arquivo) {
-    const texto = await arquivo.text();
+    let texto;
+    try {
+      texto = await arquivo.text();
+    } catch (e) {
+      alert("Erro: não consegui ler o arquivo.");
+      return;
+    }
     let importados;
     try {
       importados = JSON.parse(texto);
@@ -490,22 +497,43 @@
       alert("Erro: formato inesperado (esperava uma lista de leads).");
       return;
     }
+    // Higieniza cada lead vindo do arquivo antes de persistir/renderizar
+    // (evita XSS via innerHTML e quebra de seletores com o id).
+    const sanitizar = (imp) => ({
+      id: String((imp && imp.id) || "").replace(/[^A-Za-z0-9-]/g, "") || "lead-" + Math.random().toString(36).slice(2, 8),
+      nome: String((imp && imp.nome) || "").slice(0, 300),
+      telefone: String((imp && imp.telefone) || "").replace(/\D/g, ""),
+      avaliacoes: parseInt((imp && imp.avaliacoes) || "0", 10) || 0,
+      mapsUrl: urlSegura(imp && imp.mapsUrl),
+      instagram: String((imp && imp.instagram) || "").slice(0, 120),
+      mensagem: String((imp && imp.mensagem) || "").slice(0, 4000),
+      angulo: String((imp && imp.angulo) || "").slice(0, 120),
+      bairroRegiao: String((imp && imp.bairroRegiao) || "").slice(0, 120),
+      nota: String((imp && imp.nota) || "").slice(0, 10),
+      aberto: !!(imp && imp.aberto),
+      abertoEm: (imp && imp.abertoEm) || null,
+      enviada: !!(imp && imp.enviada),
+      enviadaEm: (imp && imp.enviadaEm) || null,
+      naoEncontrado: !!(imp && imp.naoEncontrado),
+      naoEncontradoEm: (imp && imp.naoEncontradoEm) || null,
+    });
     const atuais = await lerLeads();
     const porTelefone = {};
     for (const l of atuais) porTelefone[l.telefone] = l;
     for (const imp of importados) {
-      if (!imp || !imp.telefone) continue;
-      const ex = porTelefone[imp.telefone];
-      if (!ex) porTelefone[imp.telefone] = imp;
+      const limpo = sanitizar(imp);
+      if (!limpo.telefone) continue;
+      const ex = porTelefone[limpo.telefone];
+      if (!ex) porTelefone[limpo.telefone] = limpo;
       else {
-        porTelefone[imp.telefone] = {
-          ...imp,
-          aberto: ex.aberto || imp.aberto,
-          abertoEm: ex.abertoEm || imp.abertoEm,
-          enviada: ex.enviada || imp.enviada,
-          enviadaEm: ex.enviadaEm || imp.enviadaEm,
-          naoEncontrado: ex.naoEncontrado || imp.naoEncontrado,
-          naoEncontradoEm: ex.naoEncontradoEm || imp.naoEncontradoEm,
+        porTelefone[limpo.telefone] = {
+          ...limpo,
+          aberto: ex.aberto || limpo.aberto,
+          abertoEm: ex.abertoEm || limpo.abertoEm,
+          enviada: ex.enviada || limpo.enviada,
+          enviadaEm: ex.enviadaEm || limpo.enviadaEm,
+          naoEncontrado: ex.naoEncontrado || limpo.naoEncontrado,
+          naoEncontradoEm: ex.naoEncontradoEm || limpo.naoEncontradoEm,
         };
       }
     }
@@ -663,16 +691,13 @@
   }
 
   // Registra um envio nos contadores em memória e persiste (crash-safe).
-  async function registrarEnvio() {
-    estado.cache.daily.count++;
-    estado.cache.weekly.count++;
-    await Storage.set(AC_STORAGE.DAILY, estado.cache.daily);
-    await Storage.set(AC_STORAGE.WEEKLY, estado.cache.weekly);
-  }
-
   async function obterTabWhats() {
-    const r = await chrome.runtime.sendMessage({ action: AC_MSG.GET_WHATSAPP_TAB });
-    return r && r.ok ? r.tabId : null;
+    try {
+      const r = await chrome.runtime.sendMessage({ action: AC_MSG.GET_WHATSAPP_TAB });
+      return r && r.ok ? r.tabId : null;
+    } catch (e) {
+      return null;
+    }
   }
 
   async function testarConexao() {
@@ -733,6 +758,33 @@
     const config = estado.cache.config;
     let desdeAuto = 0;
 
+    // Estado em memória pra evitar leituras/escritas O(n) do storage a cada envio.
+    const leads = await lerLeads();
+    const porId = new Map(leads.map((l) => [l.id, l]));
+    const enviados = await lerEnviados();
+    const enviadosSet = new Set(enviados);
+    let log = await Storage.get(AC_STORAGE.LOG, []);
+    const emLog = (txt, erro) => {
+      log.unshift({ t: new Date().toLocaleTimeString("pt-BR"), txt, erro: !!erro });
+      if (log.length > 80) log.length = 80;
+    };
+    // Uma única transação de storage por envio (crash-safe: persiste a cada iteração).
+    const persistirEstado = async () => {
+      await chrome.storage.local.set({
+        [AC_STORAGE.LEADS]: leads,
+        [AC_STORAGE.ENVIADOS]: enviados,
+        [AC_STORAGE.LOG]: log,
+        [AC_STORAGE.STATS]: {
+          fila: estado.fila.slice(),
+          total: estado.totalRodada,
+          enviados: estado.enviadosRodada,
+          ativo: estado.rodando,
+        },
+        [AC_STORAGE.DAILY]: estado.cache.daily,
+        [AC_STORAGE.WEEKLY]: estado.cache.weekly,
+      });
+    };
+
     while (estado.fila.length && !estado.parado) {
       const lim = checarLimites();
       if (!lim.ok) {
@@ -750,10 +802,10 @@
       }
 
       const id = estado.fila[0];
-      const leads = await lerLeads();
-      const lead = leads.find((l) => l.id === id);
+      const lead = porId.get(id);
       if (!lead || lead.enviada || lead.naoEncontrado) {
         estado.fila.shift();
+        await salvarStats();
         continue;
       }
 
@@ -773,21 +825,26 @@
         });
       } catch (e) {
         resp = { ok: false, erro: "comunicacao-" + String(e) };
+        if (/Receiving end does not exist|Could not establish connection/.test(String(e))) {
+          await adicionarLog("Aba do WhatsApp inacessível (fechada ou recarregada) — encerrando a rodada.", true);
+          estado.parado = true;
+          break;
+        }
       }
 
       estado.fila.shift();
 
       if (resp && resp.ok) {
-        await registrarEnvio();
-        const enviados = await lerEnviados();
-        if (!enviados.includes(lead.telefone)) {
+        estado.cache.daily.count++;
+        estado.cache.weekly.count++;
+        if (!enviadosSet.has(lead.telefone)) {
+          enviadosSet.add(lead.telefone);
           enviados.push(lead.telefone);
-          await Storage.set(AC_STORAGE.ENVIADOS, enviados);
         }
-        await persistirLead(id, { enviada: true, enviadaEm: new Date().toISOString(), aberto: true, abertoEm: new Date().toISOString() });
-        await atualizarLinha(id);
+        Object.assign(lead, { enviada: true, enviadaEm: new Date().toISOString(), aberto: true, abertoEm: new Date().toISOString() });
         estado.enviadosRodada++;
-        await adicionarLog(`✓ ${lead.nome} (${lead.telefone}) — enviada`);
+        emLog(`✓ ${lead.nome} (${lead.telefone}) — enviada`);
+        atualizarLinha(id, leads);
         await atualizarStats();
 
         desdeAuto++;
@@ -803,14 +860,22 @@
           }
         }
       } else if (resp && resp.erro === "numero-invalido") {
-        await persistirLead(id, { naoEncontrado: true, naoEncontradoEm: new Date().toISOString() });
-        await atualizarLinha(id);
-        await adicionarLog(`✗ ${lead.nome} — número inválido`, true);
+        Object.assign(lead, { naoEncontrado: true, naoEncontradoEm: new Date().toISOString() });
+        atualizarLinha(id, leads);
+        emLog(`✗ ${lead.nome} — número inválido`, true);
       } else {
-        await adicionarLog(`✗ ${lead.nome} — erro: ${resp && resp.erro ? resp.erro : "sem resposta"}`, true);
+        emLog(`✗ ${lead.nome} — erro: ${resp && resp.erro ? resp.erro : "sem resposta"}`, true);
       }
 
-      await salvarStats();
+      // Falha ao persistir encerra a rodada pra evitar reenvio duplicado no resume.
+      try {
+        await persistirEstado();
+      } catch (e) {
+        emLog(`Falha ao salvar estado (${String(e)}) — encerrando pra evitar reenvio.`, true);
+        estado.parado = true;
+      }
+      await renderizarLog();
+      if (estado.parado) break;
 
       if (estado.fila.length && !estado.parado) {
         const waitMs = intervaloHumano(config.intervaloMin, config.intervaloMax);
@@ -836,43 +901,74 @@
       `Rodada: ${estado.enviadosRodada} de ${estado.totalRodada || 0}`;
   }
 
+  // Guard síncrona contra duplo clique: `estado.rodando` só vira true depois de
+  // várias awaits (testarConexao pode criar a aba e esperar até 30s), então uma
+  // flag local evita duas rodadas concorrentes (envio duplicado).
+  let iniciando = false;
   async function iniciarDisparo() {
-    if (estado.rodando) return;
+    if (estado.rodando || iniciando) return;
+    iniciando = true;
+    try {
+      await salvarCamposConfig();
 
-    await salvarCamposConfig();
-
-    const test = await testarConexao();
-    if (!test.ok) {
-      atualizarProgresso(test.erro, "erro");
-      return;
-    }
-    estado.whatsTabId = test.tabId;
-    await prepararRodada();
-
-    const config = estado.cache.config;
-    const leads = await lerLeads();
-    const enviadosSet = new Set(await lerEnviados());
-
-    let pendentes = leads.filter((l) => !l.enviada && !l.naoEncontrado && !enviadosSet.has(l.telefone));
-    if (!pendentes.length) {
-      atualizarProgresso("Nenhum lead pendente pra disparar (todos enviados, inválidos ou já disparados).", "");
-      return;
-    }
-    if (config.embaralhar) {
-      for (let i = pendentes.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [pendentes[i], pendentes[j]] = [pendentes[j], pendentes[i]];
+      const test = await testarConexao();
+      if (!test.ok) {
+        atualizarProgresso(test.erro, "erro");
+        return;
       }
-    }
+      estado.whatsTabId = test.tabId;
+      await prepararRodada();
 
-    const filaIds = pendentes.map((l) => l.id);
-    estado.rodando = true;
-    estado.parado = false;
-    estado.pausado = false;
-    await adicionarLog(`Iniciando disparo com ${filaIds.length} leads.`, false);
-    await salvarStats();
-    await atualizarStats();
-    await processarFila(filaIds, filaIds.length, 0);
+      const config = estado.cache.config;
+      const leads = await lerLeads();
+      const enviadosSet = new Set(await lerEnviados());
+      const porId = new Map(leads.map((l) => [l.id, l]));
+
+      // Se houver disparo pausado/interrompido salvo (fila + contadores), retoma
+      // dele preservando o progresso; senão, monta uma fila nova do zero.
+      const stats = await Storage.get(AC_STORAGE.STATS, null);
+      let filaIds;
+      let total;
+      let jaEnviados;
+      if (stats && stats.fila && stats.fila.length) {
+        const pendentes = stats.fila.filter((id) => {
+          const l = porId.get(id);
+          return l && !l.enviada && !l.naoEncontrado && !enviadosSet.has(l.telefone);
+        });
+        if (pendentes.length) {
+          filaIds = pendentes;
+          total = stats.total || pendentes.length;
+          jaEnviados = stats.enviados || 0;
+        }
+      }
+      if (!filaIds) {
+        let pendentes = leads.filter((l) => !l.enviada && !l.naoEncontrado && !enviadosSet.has(l.telefone));
+        if (!pendentes.length) {
+          atualizarProgresso("Nenhum lead pendente pra disparar (todos enviados, inválidos ou já disparados).", "");
+          return;
+        }
+        if (config.embaralhar) {
+          for (let i = pendentes.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [pendentes[i], pendentes[j]] = [pendentes[j], pendentes[i]];
+          }
+        }
+        filaIds = pendentes.map((l) => l.id);
+        total = filaIds.length;
+        jaEnviados = 0;
+      }
+
+      estado.fila = filaIds.slice();
+      estado.rodando = true;
+      estado.parado = false;
+      estado.pausado = false;
+      await adicionarLog(`Iniciando disparo com ${filaIds.length} leads.`, false);
+      await salvarStats();
+      await atualizarStats();
+      await processarFila(filaIds, total, jaEnviados);
+    } finally {
+      iniciando = false;
+    }
   }
 
   async function pausarDisparo() {
@@ -882,38 +978,11 @@
   }
 
   async function retomarDisparo() {
+    if (iniciando) return;
     if (estado.rodando && estado.pausado) {
       estado.pausado = false;
       atualizarProgresso("Retomando…", "disparando");
-      return;
     }
-    const stats = await Storage.get(AC_STORAGE.STATS, null);
-    if (!stats || !stats.fila || !stats.fila.length) {
-      atualizarProgresso("Nada pra retomar. Inicie um novo disparo.", "");
-      return;
-    }
-    const leads = await lerLeads();
-    const enviadosSet = new Set(await lerEnviados());
-    const fila = stats.fila.filter((id) => {
-      const l = leads.find((x) => x.id === id);
-      return l && !l.enviada && !l.naoEncontrado && !enviadosSet.has(l.telefone);
-    });
-    if (!fila.length) {
-      atualizarProgresso("Tudo já foi enviado desde a última pausa.", "");
-      return;
-    }
-    const test = await testarConexao();
-    if (!test.ok) {
-      atualizarProgresso(test.erro, "erro");
-      return;
-    }
-    estado.whatsTabId = test.tabId;
-    await prepararRodada();
-    estado.rodando = true;
-    estado.parado = false;
-    estado.pausado = false;
-    await adicionarLog("Retomando disparo.", false);
-    await processarFila(fila, stats.total || fila.length, stats.enviados || 0);
   }
 
   function pararDisparo() {
@@ -933,13 +1002,14 @@
   async function init() {
     el.modeloMensagem.value = (await lerModelo()) || MODELO_PADRAO;
     el.modeloMensagem.addEventListener("input", () => {
-      chrome.storage.local.set({ [AC_STORAGE.MODELO]: el.modeloMensagem.value });
+      chrome.storage.local.set({ [AC_STORAGE.MODELO]: el.modeloMensagem.value }).catch(() => {});
     });
 
     el.inputCsv.addEventListener("change", () => {
       if (el.inputCsv.files[0]) {
         const r = new FileReader();
         r.onload = () => processarCSV(String(r.result));
+        r.onerror = () => { el.textoUpload.textContent = "Erro ao ler o arquivo."; };
         r.readAsText(el.inputCsv.files[0], "utf-8");
       }
     });
@@ -956,6 +1026,7 @@
       if (f) {
         const r = new FileReader();
         r.onload = () => processarCSV(String(r.result));
+        r.onerror = () => { el.textoUpload.textContent = "Erro ao ler o arquivo."; };
         r.readAsText(f, "utf-8");
       }
     });
