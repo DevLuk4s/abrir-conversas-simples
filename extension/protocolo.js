@@ -11,19 +11,22 @@ if (!globalThis.__acProtocolo) {
   globalThis.AC_MSG = Object.freeze({
     PING: "ping",
     STATUS: "status",
-    SEND_ONE: "sendOne",
+    SEND_SEQ: "sendSeq",
+    ABORT: "abort",
     GET_WHATSAPP_TAB: "getWhatsAppTab",
   });
 
   globalThis.AC_STORAGE = Object.freeze({
     LEADS: "abrirConversasLeads",
-    MODELO: "abrirConversasModeloMensagem",
+    ENVIADOS: "abrirConversasEnviados",
     CONFIG: "abrirConversasConfig",
     STATS: "abrirConversasDisparoStats",
     DAILY: "abrirConversasDaily",
     WEEKLY: "abrirConversasWeekly",
     WARMUP: "abrirConversasWarmup",
-    ENVIADOS: "abrirConversasEnviados",
     LOG: "abrirConversasLog",
   });
+
+  // Delay/aguarda genérico, compartilhado por todos os contextos.
+  globalThis.SLEEP = (ms) => new Promise((r) => setTimeout(r, ms));
 }

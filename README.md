@@ -1,80 +1,138 @@
-# Abrir Conversas
+# Abrir Conversas — Disparo de Mensagens via WhatsApp
 
-Ferramenta de prospecção para WhatsApp: gera mensagens de abordagem prontas (com variação antispam) e oferece um painel para disparar conversas, tudo 100% no navegador — sem servidor, sem banco de dados.
+Extensão Chrome (Manifest V3) de prospecção para WhatsApp Web que **envia mensagens já
+prontas** de uma lista CSV. A extensão não cria, reescreve, resume, corrige ou personaliza
+nenhuma mensagem — ela importa o conteúdo pronto e apenas executa o envio, na ordem do
+arquivo, um lead por vez, com camada anti-ban.
 
-## Visão geral
+**Versão:** 1.0.0 · **Idioma:** pt-BR
 
-O projeto tem duas partes:
+## Princípio
 
-1. **Painel web de disparo** (`index.html` + `app.js`) — painel que roda no navegador:
-   - Upload de CSV (arrastar/solte ou clique) com leads do Google Maps.
-   - Tabela com status por lead: conversa aberta, mensagem enviada, número inválido.
-   - Disparo em fila (abre conversas `wa.me` em sequência com intervalo) com pausar/retomar.
-   - Dados persistidos no `localStorage` do navegador/aparelho. Backup/restore em JSON.
-2. **Pipeline de prospecção** (`prospeccao-pipeline/`) — Node.js:
-   - Transforma CSV bruto do crawler em CSV final com **mensagens prontas**, classificadas por "ângulo de abordagem", garantindo que **nunca haja duas mensagens com a mesma estrutura** (antispam).
-   - `validar.js` checa invariantes da saída.
+```
+LISTA PRONTA → IMPORTAÇÃO → VALIDAÇÃO → FILA → ENVIO SEQUENCIAL → REGISTRO DO STATUS → PRÓXIMO LEAD
+```
+
+- As mensagens chegam prontas no CSV (colunas `mensagem_1`, `mensagem_2`, ...).
+- A extensão envia **exatamente** o que está no CSV: sem corrigir português, trocar
+  palavras, adicionar/remover emojis, adicionar saudação, juntar/dividir mensagens ou
+  modificar o CTA. Célula vazia não é enviada e o fluxo segue para a próxima.
+- Ordem por lead: abre a conversa → envia `mensagem_1` → aguarda intervalo →
+  `mensagem_2` → aguarda novamente → `mensagem_3` → próximo lead.
+- Não usa IA para geração. Nenhuma chamada de rede para modelos.
+
+## Como funciona o envio (zero reload)
+
+1. **Limpa tudo** — fecha qualquer conversa aberta e garante a tela **"Nova conversa"**
+   (a única cuja busca aceita número novo; a busca da lista principal só filtra o que
+   já existe). Fallback: atalho nativo Ctrl+Alt+N.
+2. **Digita o número internacional** no campo de busca (simulando digitação humana).
+3. **Vazio = não existe** — se a tela "Nenhum resultado encontrado para 'NÚMERO'"
+   aparecer em até 8s, o lead é classificado como **número não encontrado** (cinza ✗).
+   Regra do usuário: **vazio = não existe; qualquer resultado que aparecer = é o número
+   certo.**
+4. **Abre a conversa** — clica no resultado que bate com o número/nome do CSV (suporta
+   contato salvo por nome diferente do CSV, inclusive com anotações entre parênteses como
+   "Salvador Cell (Teste)"), ou no resultado novo que surgiu após a digitação; fallback
+   de **Enter** na busca (comportamento nativo).
+5. **Valida a conversa** — só envia se o header mudou desde antes da busca e, se o header
+   mostrar um número de telefone, se ele for o do lead. Senão: `conversa-errada`.
+6. **Envia a sequência** — digita a mensagem, clica em enviar e confirma (compose vazio
+   OU última mensagem visível contém o trecho). Repete para as demais mensagens da célula,
+   aguardando o intervalo entre mensagens. Fecha (limpa) ao final.
+
+## "Número não encontrado" vs. erro
+
+- **número não encontrado** (cinza ✗, nunca entra no registro de enviados): só quando a
+  tela de vazio confirma que o número não está cadastrado (`numero-invalido`).
+- **erro**: falha de navegação (`compose-nao-encontrado`, `tela-nova-conversa-nao-confirmada`),
+  de envio (`sem-confirmacao`, `send-nao-encontrado`, `timeout-geral`, `abortado`) ou de
+  comunicação — vira `erro` para **revisão manual** (não é prova de inexistência).
+
+## Estrutura da lista (CSV)
+
+Colunas aceitas (na ordem do CSV):
+
+| nome | telefone | empresa | mensagem_1 | mensagem_2 | mensagem_3 |
+|---|---|---|---|---|---|
+| João | 5571999999999 | Loja Papua | Oii! Tava olhando a Loja Papua... | Pensei numa ideia... | Quer ver? |
+
+- `mensagem_N` dinâmico: aceita `mensagem`, `mensagem_1`, `mensagem_2`, ... na ordem do CSV.
+- Separação por `,` ou `;` (autodetectada); campos com quebras/aspas usam aspas duplas.
+- **Encoding autodetectado**: UTF-8 estrito com fallback para ANSI/CP1252 (CSVs de
+  Excel/planilhas brasileiras não quebram acentos).
+- Telefone: só dígitos, remove `0` inicial e prefixa `55` se tiver 10–11 dígitos.
+- Leads **sem telefone** ou **sem nenhuma mensagem** ficam com status `ignorado`.
+- Status por lead: `pendente`, `enviando`, `enviado`, `erro`, `ignorado`. O campo
+  `naoEncontrado` (bool) marca os leads com número não encontrado (status `erro` + cinza ✗).
+
+## Anti-duplicação (registro global)
+
+- Todo envio bem-sucedido grava o telefone no registro **ENVIADOS** (storage local),
+  independente do CSV. Número já enviado em qualquer CSV anterior **nunca** volta para
+  `pendente` — fica `enviado` (evita reenvio duplicado).
+- `número não encontrado` **nunca** entra nesse registro.
+- Leads presos em `enviando` (painel recarregado/atualização no meio do disparo) viram
+  `erro` para revisão manual — **nunca** `pendente` (o content script pode ter enviado
+  sem atualizar o registro).
+
+## Camada anti-ban
+
+- Perfis (Conservador/Moderado/Livre) com limites padrão diário/semanal.
+- Aquecimento progressivo: número novo começa com poucos envios/dia e aumenta
+  (8 + 3 por dia, até o limite).
+- Janela de horário com pausa de almoço.
+- Intervalos sorteados de forma humana (concentrados no meio), pausa automática a cada
+  N envios e pausa curta imprevisível.
+- Fila embaralhada, simulação de digitação opcional, botão de EMERGÊNCIA (aborta na hora).
+- Se o WhatsApp devolver erro/desconexão/número inválido, o envio é registrado e o
+  sistema para, informando o usuário — não tenta contornar bloqueios.
+
+## Como usar
+
+1. Instale a extensão (Chrome → `chrome://extensions` → modo desenvolvedor →
+   "Carregar sem compactação" → pasta `extension/`).
+2. Abra a extensão (ícone) — o painel abre em aba própria. Mantenha o WhatsApp Web
+   aberto e logado numa aba.
+3. Arraste o CSV (ou clique para escolher).
+4. Ajuste as configurações de segurança (perfil, intervalos, janela, limites).
+5. "Testar conexão WhatsApp" → "Disparar fila".
+
+Intervalos configuráveis:
+- **Entre mensagens da mesma conversa** (`msgIntervaloMin/Max`): tempo entre
+  `mensagem_1`, `_2` e `_3` de um mesmo lead.
+- **Entre leads** (`intervaloMin/Max`): tempo entre um contato e o próximo.
+
+Controles durante o disparo: **Pausar / Retomar**, **Parar** e **EMERGÊNCIA**
+(interrompe instantaneamente e aborta o envio em andamento). O painel também permite
+"Marcar enviada", "Número não encontrado" e "Abrir manual" (via `wa.me`) por linha, além
+de exportar/importar backup (JSON) e resetar o histórico de enviados.
 
 ## Estrutura
 
 ```
-abrir-conversas-simples/
-├── index.html                 # painel web de disparo
-├── app.js                     # lógica do painel (localStorage, CSV, fila de disparo)
-├── prospeccao_lojas_iphone_salvador.csv  # exemplo de saída do pipeline (9 leads)
-├── .gitattributes
-└── prospeccao-pipeline/
-    ├── processar.js           # CSV bruto -> CSV de prospecção
-    ├── validar.js             # checagem de invariantes (exit 1 se falhar)
-    ├── SESSIONS.md            # documentação de estado do pipeline
-    └── output/                # CSVs gerados por segmento
+extension/
+├── manifest.json            # MV3; permissions storage/scripting/unlimitedStorage; host web.whatsapp.com
+├── background.js            # service worker: abre o painel (dedupe por storage.session), localiza/injeta o content script
+├── protocolo.js             # constantes compartilhadas (AC_MSG e AC_STORAGE) + SLEEP
+├── content-whatsapp.js      # roda dentro do WhatsApp Web: ping/status/sendSeq/abort
+├── painel.html / painel.css / painel.js   # painel em aba própria (importa CSV + dispara)
+├── SESSIONS.md              # documentação de estado/sessões e histórico de correções
+└── icons/                   # ícones 16/32/48/128
 ```
 
-## Como usar o painel
+## Mensagens entre os contextos (AC_MSG)
 
-1. Abra `index.html` no navegador (duplo clique ou `python3 -m http.server`).
-2. Arraste um CSV ou clique na área de upload.
-3. Ajuste o modelo de mensagem se o CSV não tiver a coluna `Mensagem` do pipeline (use `{NOME}` como placeholder).
-4. Na tabela, use os botões de cada lead:
-   - **Abrir conversa** — abre modal para pré-visualizar/editar e abrir o WhatsApp.
-   - **Marcar como enviada** — registra o envio.
-   - **Número não encontrado** — marca como inválido.
-5. **Disparar fila** — abre cada conversa pendente em sequência, respeitando o intervalo configurado; pode pausar e retomar.
-6. **Exportar/Importar backup** — `.json` para migrar entre navegadores sem perder progresso.
+| Ação | Origem → Destino | Uso |
+|---|---|---|
+| `ping` | background → content | verifica injeção + login |
+| `status` | painel → content | testa conexão e selectors |
+| `sendSeq` | painel → content | envia a sequência de mensagens (com lock `ocupado`) |
+| `abort` | painel → content | aborta o envio em andamento (Parar/EMERGÊNCIA) |
+| `getWhatsAppTab` | painel → background | localiza/abre a aba do WhatsApp |
 
-> ⚠️ Os dados ficam salvos só no navegador/aparelho. Não sincronizam entre notebook e celular.
+## Histórico de correções
 
-## Formatos de CSV aceitos no painel
-
-- **Já processado (pipeline)** — colunas `Nome, Bairro/Região, Telefone, Link WhatsApp, Nota, Avaliações, Ângulo, Mensagem`. Mensagem e ângulo entram automaticamente.
-- **Bruto do crawler/Google Maps (Apify)** — colunas `title, phone, reviewsCount, url, ...` (aceita também `nome, telefone, avaliações, link/url`). Mensagem vem do modelo padrão.
-- O telefone é normalizado (ganha `55` quando local); leads duplicados por telefone são deduplicados.
-
-## Como usar o pipeline
-
-```bash
-cd prospeccao-pipeline
-
-# Processar um segmento
-node processar.js /caminho/para/leads.csv output/<segmento>_leads_prospeccao.csv
-
-# Validar a saída
-node validar.js output/<segmento>_leads_prospeccao.csv
-```
-
-O validador deve imprimir `Tudo OK.` e sair com código 0. Detalhes completos do fluxo em [`prospeccao-pipeline/README.md`](prospeccao-pipeline/README.md) e [`prospeccao-pipeline/SESSIONS.md`](prospeccao-pipeline/SESSIONS.md).
-
-## Extensão Chrome (implementada)
-
-`extension/` — extensão Manifest V3 que roda o painel em aba própria e dispara direto no `web.whatsapp.com`:
-
-- **Painel em aba própria** (`painel.html/css/js`) — mesmo fluxo do painel web, mas com `chrome.storage.local`.
-- **Disparo automático** (`content-whatsapp.js`) — content script busca o número, digita (simulado) e envia. Selectors resilientes + fallbacks; confirmação por compose vazio ou texto no painel de mensagens.
-- **Pipeline no navegador** (`pipeline.js`) — porta de `processar.js`, idêntico (teste de paridade em `extension/testes/paridade-pipeline.js`).
-- **Camada anti-ban humanizada** (padrão Conservador): aquecimento progressivo, janela de horário 9h–18h com pausa de almoço, intervalo aleatório humano (45–120s), pausas automáticas e imprevisíveis, limites diário/semanal, fila embaralhada, log com horários e botão de emergência.
-- `protocolo.js` — constantes compartilhadas de mensagens/storage.
-
-## Roadmap
-
-- Revisão de tom/CTA das mensagens por ângulo (sample gerado em `prospeccao-pipeline/output/_revisao_mensagens.md`).
-- Mais segmentos: conferir pools de ângulos antes e rodar `validar.js` sobre cada saída.
+Ver `extension/SESSIONS.md` para o detalhamento das sessões e correções aplicadas
+(incluindo: match de contato salvo por nome com anotações no CSV, compose desanexado na
+2ª mensagem, encoding do CSV, classificação de "não encontrado", lock de envio).

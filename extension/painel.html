@@ -3,180 +3,292 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Abrir Conversas - Painel</title>
+<title>Abrir Conversas · Painel de Prospecção</title>
 <link rel="stylesheet" href="painel.css" />
 </head>
 <body>
 
-<h1>Abrir Conversas <span class="sub">Painel de prospecção</span></h1>
-
-<div class="aviso" id="avisoPainel">
-  Abra o painel e o WhatsApp Web numa aba própria. O disparo automático roda a partir
-  desta aba — mantenha-a ativa enquanto dispara. Todos os dados ficam salvos no
-  <code>chrome.storage</code> deste navegador.
-</div>
-
-<section class="card">
-  <label class="rotulo">
-    Modelo de mensagem (usado quando o CSV não tiver coluna "Mensagem"; use {NOME})
-  </label>
-  <textarea id="modeloMensagem" rows="3" placeholder="Oi! Vi que a {NOME} não tem site próprio ainda..."></textarea>
-</section>
-
-<section class="card" id="secaoDados">
-  <div class="upload-area" id="areaUpload">
-    <div id="textoUpload">Escolha o CSV (dump do crawler ou do pipeline) ou arraste aqui</div>
-    <input type="file" id="inputCsv" accept=".csv" />
-  </div>
-  <div class="acoes-dados">
-    <button id="btnGerarMensagens" class="gerar" style="display:none">Gerar mensagens automáticas</button>
-    <span class="hint" id="hintGerar" style="display:none">Formato bruto detectado: gere as mensagens com o pipeline no navegador.</span>
-    <button class="exportar" id="btnExportar">Exportar backup</button>
-    <label class="upload-pequeno">
-      Importar backup
-      <input type="file" id="inputImportar" accept=".json" style="display:none" />
-    </label>
-    <button class="limpar" id="btnLimpar">Limpar lista</button>
-  </div>
-  <div class="contador" id="contador"></div>
-</section>
-
-<section class="card" id="secaoDisparo">
-  <h2>Disparo automático</h2>
-
-  <div class="grid-config">
-    <div class="campo">
-      <label class="rotulo">Perfil de segurança</label>
-      <select id="cfgPerfil">
-        <option value="conservador">Conservador (recomendado)</option>
-        <option value="moderado">Moderado</option>
-        <option value="livre">Livre</option>
-      </select>
-      <div class="hint">Define os limites padrão abaixo. Conservador = o mais seguro contra ban.</div>
-    </div>
-
-    <div class="campo">
-      <label class="rotulo">Intervalo entre envios (s)</label>
-      <div class="dupla">
-        <input type="number" id="cfgIntervaloMin" min="10" max="600" />
-        <span>até</span>
-        <input type="number" id="cfgIntervaloMax" min="10" max="600" />
-      </div>
-      <div class="hint">Sorteado de forma humana (concentrado no meio), não uniforme.</div>
-    </div>
-
-    <div class="campo">
-      <label class="rotulo">Limite diário</label>
-      <input type="number" id="cfgLimiteDiario" min="1" max="500" />
-      <div class="hint">Teto de envios hoje (aquecimento reduz automaticamente nos primeiros dias).</div>
-    </div>
-
-    <div class="campo">
-      <label class="rotulo">Limite semanal</label>
-      <input type="number" id="cfgLimiteSemanal" min="1" max="3000" />
-    </div>
-
-    <div class="campo">
-      <label class="rotulo">Janela de horário</label>
-      <div class="dupla">
-        <input type="time" id="cfgJanelaInicio" />
-        <span>até</span>
-        <input type="time" id="cfgJanelaFim" />
+<header class="topo">
+  <div class="topo-barra">
+    <div class="topo-marca">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+      </span>
+      <div class="topo-titulos">
+        <h1>Abrir Conversas</h1>
+        <p>Painel de prospecção no WhatsApp</p>
       </div>
     </div>
-
-    <div class="campo">
-      <label class="rotulo">
-        <input type="checkbox" id="cfgPausaAlmoco" /> Pausa de almoço
-      </label>
-      <div class="dupla">
-        <input type="time" id="cfgAlmocoInicio" />
-        <span>até</span>
-        <input type="time" id="cfgAlmocoFim" />
-      </div>
-    </div>
-
-    <div class="campo">
-      <label class="rotulo">
-        <input type="checkbox" id="cfgPausaAuto" /> Pausa automática
-      </label>
-      <div class="dupla">
-        a cada
-        <input type="number" id="cfgPausaCada" min="1" max="100" style="width:60px" />
-        <span>envios, por</span>
-        <input type="number" id="cfgPausaMin" min="1" max="120" style="width:60px" />
-        <span>a</span>
-        <input type="number" id="cfgPausaMax" min="1" max="120" style="width:60px" />
-        <span>min</span>
-      </div>
-    </div>
-
-    <div class="campo">
-      <label class="rotulo"><input type="checkbox" id="cfgEmbaralhar" /> Embaralhar fila</label>
-      <div class="hint">Evita sequências óbvias (ex: todos os 5 estrelas primeiro).</div>
-    </div>
-
-    <div class="campo">
-      <label class="rotulo"><input type="checkbox" id="cfgSimularDigitacao" /> Simular digitação</label>
-      <div class="hint">Digita a mensagem caractere a caractere dentro do WhatsApp Web.</div>
-    </div>
-
-    <div class="campo">
-      <label class="rotulo"><input type="checkbox" id="cfgAquecimento" /> Aquecimento progressivo</label>
-      <div class="hint">Número novo começa com poucos envios/dia e aumenta aos poucos.</div>
+    <div class="topo-pill">
+      <span class="pill-ponto"></span>
+      Painel de disparo
     </div>
   </div>
-
-  <div class="barra-botoes">
-    <button id="btnTestar" class="testar">Testar conexão WhatsApp</button>
-    <button id="btnDisparar" class="disparar">Disparar fila</button>
-    <button id="btnPausar" class="pausar" style="display:none">Pausar</button>
-    <button id="btnRetomar" class="retomar" style="display:none">Retomar</button>
-    <button id="btnParar" class="parar" style="display:none">Parar</button>
-    <button id="btnEmergencia" class="emergencia" style="display:none">EMERGÊNCIA</button>
-  </div>
-
   <div class="progresso" id="disparoProgresso">Pronto pra disparar.</div>
+</header>
 
-  <div class="stats" id="statsLinha"></div>
+<main class="container">
 
-  <details id="logBox">
-    <summary>Log de envios</summary>
-    <div id="logConteudo" class="log"></div>
-  </details>
-</section>
+  <section class="card" id="secaoDados">
+    <div class="card-cabecalho">
+      <h2>
+        <svg class="icone-titulo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+        Lista de leads
+      </h2>
+      <div class="contador" id="contador"></div>
+    </div>
 
-<table id="tabela" style="display:none">
-  <thead>
-    <tr>
-      <th>Nome</th>
-      <th>Bairro/Região</th>
-      <th>Telefone</th>
-      <th>Nota</th>
-      <th>Avaliações</th>
-      <th>Google Maps</th>
-      <th>Instagram</th>
-      <th>Mensagem</th>
-      <th>Ação</th>
-    </tr>
-  </thead>
-  <tbody id="corpoTabela"></tbody>
-</table>
+    <div class="upload-area" id="areaUpload">
+      <svg class="icone-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16l-4-4-4 4"/><path d="M12 12v9"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+      <div id="textoUpload">Escolha o CSV da lista pronta (nome, telefone, empresa, mensagem_1..3) ou arraste aqui</div>
+      <input type="file" id="inputCsv" accept=".csv" />
+    </div>
 
-<div class="vazio" id="vazio">Nenhum lead carregado ainda. Suba um CSV acima.</div>
+    <div class="acoes-dados">
+      <button class="btn btn-exportar" id="btnExportar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Exportar backup
+      </button>
+      <label class="btn btn-importar upload-pequeno">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Importar backup
+        <input type="file" id="inputImportar" accept=".json" style="display:none" />
+      </label>
+      <button class="btn btn-limpar" id="btnLimpar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        Limpar lista
+      </button>
+      <button class="btn btn-limpar" id="btnResetarEnviados">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+        Resetar enviados
+      </button>
+    </div>
+  </section>
+
+  <section class="card" id="secaoDisparo">
+    <div class="card-cabecalho">
+      <h2>
+        <svg class="icone-titulo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>
+        Disparo automático
+      </h2>
+      <p class="card-sub">Envio humanizado com limites anti-ban</p>
+    </div>
+
+    <div class="grid-config">
+
+      <div class="campo">
+        <label class="rotulo" for="cfgPerfil">Perfil de segurança</label>
+        <div class="select-wrap">
+          <select id="cfgPerfil">
+            <option value="conservador">Conservador (recomendado)</option>
+            <option value="moderado">Moderado</option>
+            <option value="livre">Livre</option>
+          </select>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="hint">Define os limites padrão abaixo. Conservador = o mais seguro contra ban.</div>
+      </div>
+
+      <div class="campo">
+        <label class="rotulo" for="cfgIntervaloMin">Intervalo entre envios (s)</label>
+        <div class="dupla">
+          <input type="number" id="cfgIntervaloMin" min="10" max="600" />
+          <span>até</span>
+          <input type="number" id="cfgIntervaloMax" min="10" max="600" />
+        </div>
+        <div class="hint">Entre leads. Sorteado de forma humana (concentrado no meio), não uniforme.</div>
+      </div>
+
+      <div class="campo">
+        <label class="rotulo" for="cfgMsgIntervaloMin">Intervalo entre mensagens da mesma conversa (s)</label>
+        <div class="dupla">
+          <input type="number" id="cfgMsgIntervaloMin" min="5" max="3600" />
+          <span>até</span>
+          <input type="number" id="cfgMsgIntervaloMax" min="5" max="3600" />
+        </div>
+        <div class="hint">Tempo entre mensagem_1, mensagem_2 e mensagem_3 de um mesmo lead.</div>
+      </div>
+
+      <div class="campo">
+        <label class="rotulo" for="cfgLimiteDiario">Limite diário</label>
+        <input type="number" id="cfgLimiteDiario" min="1" max="500" />
+        <div class="hint">Teto de envios hoje (aquecimento reduz automaticamente nos primeiros dias).</div>
+      </div>
+
+      <div class="campo">
+        <label class="rotulo" for="cfgLimiteSemanal">Limite semanal</label>
+        <input type="number" id="cfgLimiteSemanal" min="1" max="3000" />
+      </div>
+
+      <div class="campo">
+        <label class="toggle">
+          <span class="toggle-txt">Ignorar limites diário/semanal</span>
+          <span class="switch">
+            <input type="checkbox" id="cfgIgnorarLimites" />
+            <span class="slider"></span>
+          </span>
+        </label>
+        <div class="hint">Desliga o teto do limite diário (e o semanal) — útil pra testes. Use com cuidado.</div>
+      </div>
+
+      <div class="campo">
+        <label class="rotulo">Janela de horário</label>
+        <div class="dupla">
+          <input type="time" id="cfgJanelaInicio" />
+          <span>até</span>
+          <input type="time" id="cfgJanelaFim" />
+        </div>
+        <label class="toggle">
+          <span class="toggle-txt">Ignorar janela de horário</span>
+          <span class="switch">
+            <input type="checkbox" id="cfgIgnorarJanela" />
+            <span class="slider"></span>
+          </span>
+        </label>
+      </div>
+
+      <div class="campo">
+        <label class="toggle">
+          <span class="toggle-txt">Pausa de almoço</span>
+          <span class="switch">
+            <input type="checkbox" id="cfgPausaAlmoco" />
+            <span class="slider"></span>
+          </span>
+        </label>
+        <div class="dupla">
+          <input type="time" id="cfgAlmocoInicio" />
+          <span>até</span>
+          <input type="time" id="cfgAlmocoFim" />
+        </div>
+      </div>
+
+      <div class="campo">
+        <label class="toggle">
+          <span class="toggle-txt">Pausa automática</span>
+          <span class="switch">
+            <input type="checkbox" id="cfgPausaAuto" />
+            <span class="slider"></span>
+          </span>
+        </label>
+        <div class="dupla">
+          <span>a cada</span>
+          <input type="number" id="cfgPausaCada" min="1" max="100" />
+          <span>envios, por</span>
+          <input type="number" id="cfgPausaMin" min="1" max="120" />
+          <span>a</span>
+          <input type="number" id="cfgPausaMax" min="1" max="120" />
+          <span>min</span>
+        </div>
+      </div>
+
+      <div class="campo">
+        <label class="toggle">
+          <span class="toggle-txt">Embaralhar fila</span>
+          <span class="switch">
+            <input type="checkbox" id="cfgEmbaralhar" />
+            <span class="slider"></span>
+          </span>
+        </label>
+        <div class="hint">Evita sequências óbvias (ex: todos os 5 estrelas primeiro).</div>
+      </div>
+
+      <div class="campo">
+        <label class="toggle">
+          <span class="toggle-txt">Simular digitação</span>
+          <span class="switch">
+            <input type="checkbox" id="cfgSimularDigitacao" />
+            <span class="slider"></span>
+          </span>
+        </label>
+        <div class="hint">Digita a mensagem caractere a caractere dentro do WhatsApp Web.</div>
+      </div>
+
+      <div class="campo">
+        <label class="toggle">
+          <span class="toggle-txt">Aquecimento progressivo</span>
+          <span class="switch">
+            <input type="checkbox" id="cfgAquecimento" />
+            <span class="slider"></span>
+          </span>
+        </label>
+        <div class="hint">Número novo começa com poucos envios/dia e aumenta aos poucos.</div>
+      </div>
+
+    </div>
+
+    <div class="barra-botoes">
+      <button id="btnTestar" class="btn btn-testar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17v-2a3 3 0 0 0-6 0v2"/><path d="M21 15v-2a3 3 0 0 0-6 0v2"/><path d="M21 15h-6v2a3 3 0 0 1-6 0v-2H3v2a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3v-2z"/></svg>
+        Testar conexão
+      </button>
+      <button id="btnDisparar" class="btn btn-disparar">
+        <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 19 12 6 20 6 4"/></svg>
+        Disparar fila
+      </button>
+      <button id="btnPausar" class="btn btn-pausar" style="display:none">
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+        Pausar
+      </button>
+      <button id="btnRetomar" class="btn btn-retomar" style="display:none">
+        <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 19 12 6 20 6 4"/></svg>
+        Retomar
+      </button>
+      <button id="btnParar" class="btn btn-parar" style="display:none">
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+        Parar
+      </button>
+      <button id="btnEmergencia" class="btn btn-emergencia" style="display:none">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        EMERGÊNCIA
+      </button>
+    </div>
+
+    <div class="stats" id="statsLinha"></div>
+
+    <details id="logBox">
+      <summary>
+        <span>Log de envios</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+      </summary>
+      <div id="logConteudo" class="log"></div>
+    </details>
+  </section>
+
+  <section class="card tabela-card">
+    <table id="tabela" style="display:none">
+      <thead>
+        <tr>
+          <th>Nome</th>
+          <th>Empresa</th>
+          <th>Telefone</th>
+          <th>Mensagens</th>
+          <th>Status</th>
+          <th>Ação</th>
+        </tr>
+      </thead>
+      <tbody id="corpoTabela"></tbody>
+    </table>
+
+    <div class="vazio" id="vazio">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <p>Nenhum lead carregado ainda.</p>
+      <span>Suba um CSV da lista pronta acima para começar.</span>
+    </div>
+  </section>
+
+</main>
 
 <dialog id="modalMensagem">
   <h3 id="modalTitulo">Conversa</h3>
   <div class="hint">Edite se precisar e abra o WhatsApp manualmente (modo de emergência/fallback).</div>
   <textarea id="modalMsg" rows="5"></textarea>
   <div class="botoes">
-    <button class="fechar" id="modalBtnFechar">Cancelar</button>
-    <button id="modalBtnAbrir">Abrir WhatsApp</button>
+    <button class="btn btn-fechar" id="modalBtnFechar">Cancelar</button>
+    <button class="btn btn-abrir" id="modalBtnAbrir">Abrir WhatsApp</button>
   </div>
 </dialog>
 
 <script src="protocolo.js"></script>
-<script src="pipeline.js"></script>
 <script src="painel.js"></script>
 </body>
 </html>
