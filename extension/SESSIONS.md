@@ -2,7 +2,158 @@
 
 > Mantenha este arquivo atualizado. É o ponto de retomada caso a sessão estoure o limite
 > ou outra IA assuma o trabalho.
-> Última atualização: 2026-08-15
+> Última atualização: 2026-08-19
+
+## 🔧 2026-08-19 (2º): número aparece na busca mas o robô não navega ("fica procurando")
+
+**Sintoma relatado pelo usuário:** "alguns números aparecem no chat de nova mensagem mas ele
+fica procurando". No log real: `conversa errada/não navegou: header não mudou (busca não
+navegou) · antes="+55 71 9387-0050" · depois="+55 71 9387-0050" · clique=enter (abriu)`. O
+número aparece no resultado da tela "Nova conversa", mas o robô não clica o resultado certo,
+cai no fallback de Enter e o Enter não navega → lead fica preso em erro.
+
+**Causa raiz em `content-whatsapp.js`:**
+1. `acharResultadoPorNumero` varria nós curtos (`span`/`div`, texto ≤ 40 chars) e exigia
+   **todos** os tokens do nome num único nó. Nomes longos de lojas ("Portasprontas - Portas
+   de Alumínio Para Móveis") ou números formatados espalhados em vários spans não casavam →
+   o matcher voltava `null` e o código caía no Enter (que não navega nesta versão).
+2. A confirmação de "conversa abriu" (`clicarPrimeiroResultado` e passo 4 de
+   `tentarAbrirConversa`) só checava **compose visível**. Na tela "Nova conversa" o WhatsApp
+   mantém a conversa anterior no painel direito (header + compose) — o compose antigo ficava
+   "visível" e marcava falso `abriu=true` (log `clique=enter (abriu)`) sem navegar; o header
+   4c depois detectava "não mudou" e dava `conversa-errada`.
+
+**Correções aplicadas:**
+1. `acharResultadoPorNumero`: agora casa o número/nome contra o **texto completo de cada
+   linha de resultado** (`[role="listitem"]`, `[data-testid="cell-frame-container"]`,
+   `[role="button"]`, limite 200 chars) — nomes longos e números formatados batem; o clique
+   (método que funciona) passa a ser usado em vez do Enter.
+2. Novo helper `aguardarNavegacao(timeout)`: só confirma navegação quando a tela "Nova
+   conversa" **fechou** (`!estaNaTelaNovaConversa()`) E o compose do chat novo está visível.
+   Usado em `clicarPrimeiroResultado` (após clique e após Enter) e no passo 4 de
+   `tentarAbrirConversa` (12s) — elimina o falso "abriu" do compose residual.
+
+**Rede de segurança mantida:** header 4c/4e + `detectarNumeroInvalido` continuam validando
+depois que a conversa abre — um clique/Enter errado não dispara mensagem.
+
+**Validação:** `node --check` OK em `content-whatsapp.js`. **Pendente teste real:** recarregar
+a extensão e disparar a lista — leads com nomes longos/números que "apareciam mas travavam"
+devem abrir e enviar; os erros `clique=enter (abriu)` sem navegação devem sumir.
+
+## 🔧 2026-08-19: NUNCA enviar para conversa existente + pausa quando o usuário usa a aba
+
+**Sintoma relatado pelo usuário:** durante um disparo, enquanto ele respondia no celular, a
+extensão **entrava nas conversas que ele estava respondendo e mandava a mensagem** — e essas
+conversas **não eram leads da lista**, eram **contatos pessoais do usuário** (conversas com
+histórico/ativas). As validações 4c/4e não pegavam o caso porque o chat errado mostrava só o
+nome no header (sem número) → a mensagem automática saía pro contato real.
+
+**Correção 1 — regra de segurança dura "conversa-existente" (`content-whatsapp.js`):**
+- Novo helper `conversaPossuiMensagens(panel)` (mesmos seletores do `ultimaMensagemVisivel`:
+  `[data-testid*="msg-container"]`, `.message-in`, `.message-out`).
+- Novo passo **4f** em `tentarAbrirConversa` (após 4c/4e e `detectarNumeroInvalido(4)`, antes de
+  retornar `ok`): polling de ~2s pra as mensagens de um chat existente renderizarem; se aparecer
+  QUALQUER mensagem → `limparTudo()` + `{ ok:false, erro:"conversa-existente" }`. Conversa vazia
+  (lead novo, nunca contatado) segue o fluxo de envio normal.
+- `abrirConversaComRetry`: `conversa-existente` é DEFINITIVO (chat com histórico não muda numa
+  nova tentativa) → entra no break e é propagado como `{ erro:"conversa-existente" }` (evita
+  reabrir 5x o chat do contato do usuário).
+
+**Correção 2 — pausa quando o usuário está usando a aba (`content-whatsapp.js`):**
+- Detector de atividade humana: listeners `mousedown/keydown/pointerdown/wheel/touchstart` no
+  documento contando só eventos com `e.isTrusted === true` (os cliques/teclas sintéticos do robô
+  têm `isTrusted:false` → nunca tocam o detector). Guarda `ultimaAtividadeHumana`.
+- `usuarioAtivoNaAba(ms=10s)` / `aguardarUsuarioOcioso()` (espera até ~20s o usuário parar).
+- Uso: início de `tentarAbrirConversa` (antes de `limparTudo`) e início de `enviarNoCompose` —
+  se o usuário mexer na aba, o robô espera ou aborta o envio daquele lead (`usuario-ativo`).
+
+**Painel (`painel.js` + `painel.css`):**
+- `processarFila`: novo ramo `erro === "conversa-existente"` → `status:"erro"` + flag
+  `conversaExistente` + `conversaExistenteEm` + log `✗ Nome — conversa já existente (tem
+  mensagens) — não enviado`. Não conta como envio, não entra no registry, não pausa entre leads.
+- `montarLinha`: linha com classe `conversa-existente` (fundo âmbar), badge `st-conversa-existente`
+  "Conversa existente", botão desabilitado com o mesmo rótulo.
+- `renderizarLeads`: contador mostra `· N em conversa` (fora da contagem de "erros").
+- Flag preservada no merge do `processarCSV` e no `sanitizar`/merge do `importarBackup` (reimportar
+  CSV/backup não perde a marcação).
+
+**Validação:** `node --check` OK em `content-whatsapp.js`, `painel.js`, `background.js`,
+`protocolo.js`. **Pendente teste real:** recarregar a extensão, disparar e conferir que (a) lead
+novo (conversa vazia) envia normal, (b) qualquer número com histórico é pulado com log claro,
+(c) mexer na aba durante o disparo faz o robô esperar/pular.
+
+## 🔧 2026-08-18: import direto do CSV do crawler Google Places (Apify) no painel
+
+**Pedido do usuário:** colar o CSV do crawler (230 colunas, ex. `dataset_crawler-google-places_*.csv`)
+direto no painel, sem ferramenta externa, gerando **1 mensagem de abertura** por lead com
+**textos variados** (mensagem idêntica pra todos é fingerprint de ban do WhatsApp).
+
+**Mapeamento (crawler → extensão), em `painel.js` (`processarCrawler`):**
+- `nome` ← `title`; `telefone` ← `phoneUnformatted` (fallback `phone`, via `formatarTelefone`);
+  `empresa` ← `categoryName` (fallback `categories/0`); `mensagem_1` ← variante sorteada.
+- Lead sem telefone → `ignorado` (reuso do `processarCSV` — dedupe por telefone, registro
+  ENVIADOS, preservação de status).
+
+**Variação de texto:** nova config `crawlerTemplates` (array; 6 padrões). `preencherConfig`/
+`salvarCamposConfig` tratam o array (textarea, uma linha por variação). Na conversão, cada
+lead recebe uma variante **sorteada** com `{empresa}`/`{nome}` preenchidos na hora — a
+extensão NÃO substitui placeholder no envio (envia exatamente o texto do CSV).
+
+**`painel.html`:** botão "Importar crawler" em `acoes-dados` (label + input file oculto,
+padrão dos demais imports) + textarea `cfgCrawlerTemplates` no grid de configuração
+(`.campo-largo` em `painel.css`). Listener em `init()` com guarda `rolando()`.
+
+**Filtro na importação:** só entram leads **com telefone** — os sem telefone são
+descartados na hora (nem viram `ignorado`), e o log avisa quantos foram descartados.
+
+**Sem `()` na mensagem:** templates padrão que colocavam `({empresa})` foram reescritos
+para `no ramo de {empresa}`, e `preencherTemplate` agora limpa parênteses do valor inserido
+(`limparParens`) — o disparo nunca manda "()" dentro do nome da empresa. Migração em
+`lerConfig` (`MIGRACAO_TEMPLATES`) corrige configs antigas já salvas no storage.
+
+**Sem saudações de horário:** "Boa tarde!" saiu dos templates padrão (ficou "Olá!") —
+a mensagem é gerada na importação e o disparo pode acontecer em outro horário (mandar
+"Boa tarde" de manhã é sinal de robô). Migração `RE_SAUDACAO_HORARIO` em `lerConfig`
+remove bom dia/boa tarde/boa noite de configs salvas. Dica adicionada ao hint do textarea.
+
+**Refatoração:** `lerCsv` virou `lerArquivoTexto(file, cb)` (ArrayBuffer + TextDecoder
+UTF-8 estrito → CP1252), reutilizado por `lerCsv` e `lerCrawler`.
+
+**Validação:** `node --check` OK em `painel.js`. **Teste real (simulado):** CSV do crawler
+com 99 leads → 89 com telefone convertidos, 10 sem telefone; 6 variantes sorteadas produzem
+~50+ mensagens distintas. **Pendente teste real:** importar no painel (revisar textos na
+tabela antes de disparar) e conferir que reimportar não duplica.
+
+## 🔧 2026-08-17: disparo simultâneo com 2 números (perfis isolados) + sync de enviados
+
+**Pedido do usuário:** disparar a mesma lista em 2 contas do WhatsApp ao mesmo tempo, com
+perfis isolados do Chrome, sem que o mesmo contato receba mensagem das duas contas.
+
+**Correção em `painel.js`:**
+1. `csvEscape(valor)`: escape CSV (aspas duplas se contiver `;`/`,`/`"`/quebra; aspas
+   internas dobradas) — padrão usado na geração das partes.
+2. `dividirLista()`: filtra `pendentes` com telefone, pede N (2..total) e particiona por
+   **round-robin** em N grupos **disjuntos**; gera N arquivos CSV
+   (`dividida-<i>-de-<n>-<data>.csv`, sep `;`, header `nome,telefone,empresa,mensagem_1..N`,
+   BOM UTF-8) com as mensagens exatas já normalizadas. Só pendentes entram (já enviados /
+   não encontrados ficam fora).
+3. `exportarEnviados()`: baixa `{versao:3, tipo:"enviados", enviados}`.
+4. `importarEnviados(arquivo)`: merge por união mantendo data mais antiga (mesmo padrão do
+   import de backup) + log com nº de novos.
+
+**`painel.html`:** botões novos em `acoes-dados`: "Dividir lista", "Exportar enviados",
+"Importar enviados" (input file oculto). Refs/listeners em `painel.js`, protegidos por
+`rolando()`.
+
+**`README.md`:** seção "Disparo simultâneo com 2 números (perfis isolados)" com o fluxo
+(2 perfis `--user-data-dir` + extensão nos dois + número diferente por perfil + Dividir
+lista → importar parte por perfil → disparar junto) e avisos (não rodar a mesma parte nos
+dois; mesmo número nos 2 derruba sessão; histórico de enviados é por perfil → Exportar/
+Importar enviados para lotes sequenciais).
+
+**Validação:** `node --check` OK em `painel.js`. **Pendente teste real:** dividir lista
+com 2+ contas e disparar em 2 perfis simultaneamente (confirmar que nenhum contato cai
+nas 2 partes) e importar/exportar enviados entre perfis.
 
 ## 🔧 2026-08-15: confirmação de envio reforçada com o tique nativo do WhatsApp
 

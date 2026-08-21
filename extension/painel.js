@@ -34,6 +34,25 @@
     livre: { intervaloMin: 20, intervaloMax: 45, limiteDiario: 60, limiteSemanal: 400, pausaCada: 20, pausaMin: 5, pausaMax: 10, msgIntervaloMin: 30, msgIntervaloMax: 75 },
   };
 
+  // Versões antigas dos templates padrão (com "()" ao redor de {empresa}) que
+  // devem ser substituídas na leitura da config — o disparo não pode mandar
+  // parênteses dentro do nome da empresa.
+  const MIGRACAO_TEMPLATES = [
+    [
+      "Boa tarde! Vi seu negócio ({empresa}) em Salvador e tenho uma ideia pra te mostrar. Tudo bem?",
+      "Olá! Vi seu negócio no ramo de {empresa} em Salvador e tenho uma ideia pra te mostrar. Tudo bem?",
+    ],
+    [
+      "Olá! Sou do ramo e notei seu negócio ({empresa}) em Salvador. Que tal trocar uma ideia?",
+      "Olá! Sou do ramo e notei seu negócio no ramo de {empresa} em Salvador. Que tal trocar uma ideia?",
+    ],
+  ];
+
+  // Saudações de horário (bom dia/boa tarde/boa noite) são removidas dos
+  // templates: a mensagem é gerada na importação e o disparo pode acontecer em
+  // outro horário — mandar "Boa tarde" de manhã é sinal clássico de robô.
+  const RE_SAUDACAO_HORARIO = /\b(?:bom dia|boa tarde|boa noite)\b[!.,]?\s*/gi;
+
   const CONFIG_PADRAO = Object.assign(
     {
       perfil: "conservador",
@@ -49,6 +68,14 @@
       simularDigitacao: true,
       aquecimento: true,
       ignorarLimites: false,
+      crawlerTemplates: [
+        "Oi! Vi que você atua no ramo de {empresa} em Salvador e queria conversar sobre uma ideia. Pode me chamar?",
+        "Olá! Encontrei seu negócio no ramo de {empresa} pesquisando na região. Queria apresentar uma proposta rápida. Topa?",
+        "Oi, tudo bem? Seu trabalho no ramo de {empresa} me chamou atenção. Posso te mandar um detalhe?",
+        "Olá! Vi seu negócio no ramo de {empresa} em Salvador e tenho uma ideia pra te mostrar. Tudo bem?",
+        "E aí! Tava vendo lojas na região e seu trabalho no ramo de {empresa} apareceu. Me deixa te contar uma ideia?",
+        "Olá! Sou do ramo e notei seu negócio no ramo de {empresa} em Salvador. Que tal trocar uma ideia?",
+      ],
     },
     PERFIS.conservador
   );
@@ -64,6 +91,10 @@
     btnExportar: $("btnExportar"),
     btnLimpar: $("btnLimpar"),
     btnResetarEnviados: $("btnResetarEnviados"),
+    btnDividirLista: $("btnDividirLista"),
+    btnExportarEnviados: $("btnExportarEnviados"),
+    inputImportarEnviados: $("inputImportarEnviados"),
+    inputCrawler: $("inputCrawler"),
     tabela: $("tabela"),
     corpoTabela: $("corpoTabela"),
     vazio: $("vazio"),
@@ -105,6 +136,7 @@
       embaralhar: $("cfgEmbaralhar"),
       simularDigitacao: $("cfgSimularDigitacao"),
       aquecimento: $("cfgAquecimento"),
+      crawlerTemplates: $("cfgCrawlerTemplates"),
     },
   };
 
@@ -112,7 +144,28 @@
 
   async function lerConfig() {
     const c = await Storage.get(AC_STORAGE.CONFIG, null);
-    return Object.assign({}, CONFIG_PADRAO, c || {});
+    const cfg = Object.assign({}, CONFIG_PADRAO, c || {});
+    // Migração: corrige templates antigos — parênteses ao redor de {empresa} e
+    // saudações de horário (bom dia/boa tarde/boa noite). O disparo envia o
+    // texto exatamente como está no CSV, então nada disso pode sobrar.
+    if (c && Array.isArray(c.crawlerTemplates)) {
+      let t = c.crawlerTemplates.slice();
+      let mudou = false;
+      for (const [antigo, novo] of MIGRACAO_TEMPLATES) {
+        const i = t.indexOf(antigo);
+        if (i !== -1) { t[i] = novo; mudou = true; }
+      }
+      t = t.map((s) => {
+        const limpo = String(s || "").replace(RE_SAUDACAO_HORARIO, "");
+        if (limpo !== s) mudou = true;
+        return limpo;
+      });
+      if (mudou) {
+        cfg.crawlerTemplates = t;
+        await Storage.set(AC_STORAGE.CONFIG, cfg);
+      }
+    }
+    return cfg;
   }
   async function salvarConfig(c) {
     await Storage.set(AC_STORAGE.CONFIG, c);
@@ -123,6 +176,7 @@
     for (const [k, input] of Object.entries(el.cfg)) {
       const val = c[k];
       if (input.type === "checkbox") input.checked = !!val;
+      else if (Array.isArray(val)) input.value = val.join("\n");
       else input.value = val !== undefined ? val : "";
     }
   }
@@ -163,6 +217,10 @@
     c.simularDigitacao = el.cfg.simularDigitacao.checked;
     c.aquecimento = el.cfg.aquecimento.checked;
     c.ignorarLimites = el.cfg.ignorarLimites.checked;
+    c.crawlerTemplates = el.cfg.crawlerTemplates.value
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
     await salvarConfig(c);
   }
 
@@ -216,8 +274,65 @@
     if (!numeros) return null;
     if (numeros.startsWith("0")) numeros = numeros.slice(1);
     if (numeros.startsWith("55")) return numeros;
-    if (numeros.length >= 10 && numeros.length <= 11) numeros = "55" + numeros;
-    return numeros;
+    // Padrão BR com DDD (10 ou 11 dígitos): prefixa 55. Número fora desse
+    // padrão (sem DDD, estrangeiro) devolve null — a busca do WhatsApp poderia
+    // casar com um contato DIFERENTE (mesmos 8 dígitos finais) e a mensagem
+    // iria pra pessoa errada. Fora do padrão = fora do disparo.
+    if (numeros.length === 10 || numeros.length === 11) return "55" + numeros;
+    return null;
+  }
+
+  function csvEscape(valor) {
+    const v = String(valor == null ? "" : valor);
+    return /[;,"\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  }
+
+  // Gera N arquivos CSV com números disjuntos a partir dos leads pendentes —
+  // permite disparo simultâneo em vários perfis sem enviar 2x pro mesmo contato.
+  async function dividirLista() {
+    const leads = await lerLeads();
+    const pendentes = leads.filter((l) => l.status === "pendente" && l.telefone);
+    if (!pendentes.length) {
+      alert("Não há leads pendentes com telefone pra dividir.");
+      return;
+    }
+    const n = parseInt(prompt("Em quantas contas dividir a lista?", "2"), 10);
+    if (!(n >= 2 && n <= pendentes.length)) {
+      alert("Número de contas inválido (use de 2 até " + pendentes.length + ").");
+      return;
+    }
+    const grupos = Array.from({ length: n }, () => []);
+    pendentes.forEach((l, i) => grupos[i % n].push(l));
+    const cabecalho = ["nome", "telefone", "empresa"].concat(
+      pendentes.some((l) => l.mensagens.length > 1)
+        ? pendentes.map((l) => l.mensagens).reduce((a, b) => (b.length > a.length ? b : a), []).map((_, i) => "mensagem_" + (i + 1))
+        : ["mensagem"]
+    );
+    const data = new Date().toISOString().slice(0, 10);
+    grupos.forEach((grupo, i) => {
+      if (!grupo.length) return;
+      const linhas = grupo.map((l) => {
+        const nome = csvEscape(l.nome || "");
+        const telefone = csvEscape(l.telefone || "");
+        const empresa = csvEscape(l.empresa || "");
+        const msgs = l.mensagens.map(csvEscape);
+        return [nome, telefone, empresa].concat(msgs).join(";");
+      });
+      const csv = cabecalho.join(";") + "\n" + linhas.join("\n");
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "dividida-" + (i + 1) + "-de-" + n + "-" + data + ".csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+    adicionarLog(
+      "Lista dividida em " + n + " partes (" + grupos.map((g) => g.length).join(" + ") + " pendentes). Importe cada parte no perfil correspondente.",
+      false
+    );
   }
 
   function escaparHtml(texto) {
@@ -340,13 +455,43 @@
       });
     }
 
-    await salvarLeads(leads);
+    // Mescla com a lista atual por telefone em vez de substituir: preserva o
+    // status (enviado/erro/ignorado) de leads que já existiam e mantém leads
+    // que saíram do novo CSV — reimportar o crawler/CSV não apaga histórico.
+    const porTel = new Map(Object.entries(statusAntigo));
+    const vistosMesclados = new Set();
+    const leadsMesclados = [];
+    for (const l of leads) {
+      if (l.telefone && vistosMesclados.has(l.telefone)) continue;
+      if (l.telefone) vistosMesclados.add(l.telefone);
+      const ex = l.telefone ? porTel.get(l.telefone) : null;
+      if (ex && !l.semTelefone && ex.status !== "pendente" && ex.status !== undefined) {
+        l.status = ex.status;
+        l.erroEm = ex.erroEm || l.erroEm;
+        l.enviada = ex.enviada || l.enviada;
+        l.enviadaEm = ex.enviadaEm || l.enviadaEm;
+        l.naoEncontrado = ex.naoEncontrado || l.naoEncontrado;
+        l.naoEncontradoEm = ex.naoEncontradoEm || l.naoEncontradoEm;
+        l.conversaExistente = ex.conversaExistente || l.conversaExistente;
+        l.conversaExistenteEm = ex.conversaExistenteEm || l.conversaExistenteEm;
+        l.aberto = ex.aberto || l.aberto;
+        l.abertoEm = ex.abertoEm || l.abertoEm;
+      }
+      leadsMesclados.push(l);
+    }
+    // Leads antigos que NÃO estão no novo CSV: mantém com o status preservado.
+    for (const [tel, ex] of porTel) {
+      if (!vistosMesclados.has(tel)) leadsMesclados.push(ex);
+    }
+    await salvarLeads(leadsMesclados);
     const avisos = [];
     if (semTelefoneCount) avisos.push(semTelefoneCount + " sem telefone");
     if (semMensagemCount) avisos.push(semMensagemCount + " sem mensagem");
+    const preservados = leadsMesclados.length - leads.length;
     el.textoUpload.textContent =
-      "Clique aqui ou arraste outro CSV pra substituir a lista" +
-      (avisos.length ? " (" + avisos.join(" · ") + " ficam fora do disparo)" : "");
+      "Clique aqui ou arraste outro CSV pra importar e mesclar com a lista atual" +
+      (avisos.length ? " (" + avisos.join(" · ") + " ficam fora do disparo)" : "") +
+      (preservados > 0 ? " · " + preservados + " lead(s) mantidos do CSV anterior" : "");
     await renderizarLeads();
   }
 
@@ -364,15 +509,19 @@
     const tr = document.createElement("tr");
     tr.dataset.id = lead.id;
     const naoAchado = !!lead.naoEncontrado;
+    const emConversa = !!lead.conversaExistente;
     if (lead.status === "enviado") tr.classList.add("enviada");
     if (naoAchado) tr.classList.add("nao-encontrado");
+    else if (emConversa) tr.classList.add("conversa-existente");
     else if (lead.status === "erro") tr.classList.add("erro-envio");
     if (lead.status === "ignorado" || lead.semTelefone) tr.classList.add("sem-telefone");
 
     const stay = (lead.status || "pendente") in STATUS_RENDER ? lead.status : "pendente";
     const badge = naoAchado
       ? { rotulo: "Número não encontrado ✗", cls: "st-nao-encontrado" }
-      : STATUS_RENDER[stay];
+      : emConversa
+        ? { rotulo: "Conversa existente", cls: "st-conversa-existente" }
+        : STATUS_RENDER[stay];
     const statusTxt = lead.semTelefone
       ? "Ignorado (sem telefone)"
       : lead.status === "ignorado" && !lead.mensagens.length
@@ -389,8 +538,8 @@
     let acao;
     if (lead.semTelefone || lead.status === "ignorado") {
       acao = `<button class="nao-encontrado" disabled>Fora do disparo</button>`;
-    } else if (lead.status === "enviado" || naoAchado) {
-      acao = `<button class="nao-encontrado" disabled>${naoAchado ? "Número não encontrado ✗" : "Enviada ✓"}</button>`;
+    } else if (lead.status === "enviado" || naoAchado || emConversa) {
+      acao = `<button class="nao-encontrado" disabled>${naoAchado ? "Número não encontrado ✗" : emConversa ? "Conversa existente" : "Enviada ✓"}</button>`;
     } else if (estado.rodando) {
       // Durante o disparo, os botões de linha ficam desabilitados — editar um
       // lead manualmente no meio da rodada seria sobrescrito pelo snapshot
@@ -428,10 +577,13 @@
     const enviados = leads.filter((l) => l.status === "enviado").length;
     const pendentes = leads.filter((l) => l.status === "pendente").length;
     const naoAchados = leads.filter((l) => l.naoEncontrado).length;
-    const erros = leads.filter((l) => l.status === "erro" && !l.naoEncontrado).length;
+    const erros = leads.filter((l) => l.status === "erro" && !l.naoEncontrado && !l.conversaExistente).length;
+    const emConversa = leads.filter((l) => l.conversaExistente).length;
     const ignorados = leads.filter((l) => l.status === "ignorado").length;
     el.contador.textContent =
-      `${enviados} enviados · ${pendentes} pendentes · ${erros} com erro · ${naoAchados} não encontrados · ${ignorados} ignorados · ${leads.length} no total`;
+      `${enviados} enviados · ${pendentes} pendentes · ${erros} com erro · ${naoAchados} não encontrados · ${ignorados} ignorados` +
+      (emConversa ? ` · ${emConversa} em conversa` : "") +
+      ` · ${leads.length} no total`;
 
     el.corpoTabela.innerHTML = "";
     for (const lead of leads) {
@@ -443,7 +595,8 @@
     const leads = leadsRef || (await lerLeads());
     const lead = leads.find((l) => l.id === id);
     if (!lead) return;
-    const existente = el.corpoTabela.querySelector(`tr[data-id="${id}"]`);
+    // Compara por dataset.id (não por seletor CSS montado com o id cru).
+    const existente = [...el.corpoTabela.querySelectorAll("tr")].find((tr) => tr.dataset.id === id);
     if (existente) existente.replaceWith(montarLinha(lead));
   }
 
@@ -596,6 +749,8 @@
         enviadaEm: (imp && imp.enviadaEm) || null,
         naoEncontrado: !!(imp && imp.naoEncontrado),
         naoEncontradoEm: (imp && imp.naoEncontradoEm) || null,
+        conversaExistente: !!(imp && imp.conversaExistente),
+        conversaExistenteEm: (imp && imp.conversaExistenteEm) || null,
         aberto: !!(imp && imp.aberto),
         abertoEm: (imp && imp.abertoEm) || null,
       };
@@ -622,6 +777,8 @@
           enviadaEm: ex.enviadaEm || limpo.enviadaEm,
           naoEncontrado: ex.naoEncontrado || limpo.naoEncontrado,
           naoEncontradoEm: ex.naoEncontradoEm || limpo.naoEncontradoEm,
+          conversaExistente: ex.conversaExistente || limpo.conversaExistente,
+          conversaExistenteEm: ex.conversaExistenteEm || limpo.conversaExistenteEm,
           aberto: ex.aberto || limpo.aberto,
           abertoEm: ex.abertoEm || limpo.abertoEm,
         };
@@ -645,6 +802,59 @@
     }
     await Storage.set(AC_STORAGE.ENVIADOS, enviados);
     adicionarLog("Backup importado: " + importados.length + " leads mesclados.", false);
+    await renderizarLeads();
+  }
+
+  // ---------- Sync do histórico de enviados (entre perfis) ----------
+
+  async function exportarEnviados() {
+    const enviados = await lerEnviados();
+    const conteudo = JSON.stringify({ versao: 3, tipo: "enviados", enviados }, null, 2);
+    const blob = new Blob([conteudo], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const data = new Date().toISOString().slice(0, 10);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "abrir-conversas-enviados-" + data + ".json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  async function importarEnviados(arquivo) {
+    let texto;
+    try {
+      texto = await arquivo.text();
+    } catch (e) {
+      alert("Erro: não consegui ler o arquivo.");
+      return;
+    }
+    let enviadosImport;
+    try {
+      const parsed = JSON.parse(texto);
+      if (parsed && parsed.enviados && typeof parsed.enviados === "object") {
+        enviadosImport = parsed.enviados;
+      } else {
+        alert("Erro: formato inesperado (esperava um arquivo de 'enviados').");
+        return;
+      }
+    } catch (e) {
+      alert("Erro: arquivo não é um JSON válido.");
+      return;
+    }
+    // Mescla o registry por união, mantendo a data mais antiga.
+    const enviados = await lerEnviados();
+    let novos = 0;
+    for (const [tel, data] of Object.entries(enviadosImport)) {
+      if (!tel || typeof data !== "string") continue;
+      if (!enviados[tel]) {
+        enviados[tel] = data;
+        novos++;
+      }
+    }
+    await Storage.set(AC_STORAGE.ENVIADOS, enviados);
+    adicionarLog("Enviados importados: " + novos + " número(s) novo(s) no histórico.", false);
     await renderizarLeads();
   }
 
@@ -821,21 +1031,28 @@
 
   async function obterTabWhats() {
     try {
-      const r = await chrome.runtime.sendMessage({ action: AC_MSG.GET_WHATSAPP_TAB });
-      return r && r.ok ? r.tabId : null;
+      return await chrome.runtime.sendMessage({ action: AC_MSG.GET_WHATSAPP_TAB });
     } catch (e) {
       return null;
     }
   }
 
   async function testarConexao() {
-    const tabId = await obterTabWhats();
-    if (!tabId) return { ok: false, erro: "Não consegui abrir/achar a aba do WhatsApp." };
+    const r = await obterTabWhats();
+    if (!r || !r.ok) return { ok: false, erro: "Não consegui abrir/achar a aba do WhatsApp." };
+    const tabId = r.tabId;
     try {
-      const r = await chrome.tabs.sendMessage(tabId, { action: AC_MSG.STATUS });
-      if (!r || !r.ok) return { ok: false, erro: "Content script não respondeu. Recarregue a aba do WhatsApp." };
-      if (!r.logado) return { ok: false, erro: "WhatsApp Web não está logado. Escaneie o QR code e tente de novo." };
-      return { ok: true, tabId, selectors: r.selectors };
+      const r2 = await chrome.tabs.sendMessage(tabId, { action: AC_MSG.STATUS });
+      if (!r2 || !r2.ok) return { ok: false, erro: "Content script não respondeu. Recarregue a aba do WhatsApp." };
+      if (!r2.logado) return { ok: false, erro: "WhatsApp Web não está logado. Escaneie o QR code e tente de novo." };
+      // Múltiplas abas logadas = risco de disparar pra conta errada.
+      if (r.ambiguo) {
+        adicionarLog(
+          "Aviso: mais de uma aba do WhatsApp está logada — o disparo usa a mais recente. Feche as outras abas se for pra conta diferente.",
+          true
+        );
+      }
+      return { ok: true, tabId, selectors: r2.selectors, ambiguo: r.ambiguo };
     } catch (e) {
       return { ok: false, erro: String(e) };
     }
@@ -1091,6 +1308,18 @@
             });
             atualizarLinha(id, leads);
             emLog(`✗ ${lead.nome} — número não encontrado`, true);
+          } else if (erro === "conversa-existente") {
+            // Conversa com histórico (contato/cliente real do usuário) — a
+            // mensagem automática NUNCA sai pra chat com mensagens. Não conta
+            // como envio, não entra no registry; fica pra revisão manual.
+            Object.assign(lead, {
+              status: "erro",
+              conversaExistente: true,
+              conversaExistenteEm: new Date().toISOString(),
+              erroEm: new Date().toISOString(),
+            });
+            atualizarLinha(id, leads);
+            emLog(`✗ ${lead.nome} — conversa já existente (tem mensagens) — não enviado`, true);
           } else {
             // Abortado ou qualquer outro erro: sai do status "enviando" — sem
             // isso o lead ficaria preso (o resume só pega "pendente").
@@ -1259,24 +1488,120 @@
       .catch(() => {});
   }
 
-  function lerCsv(file) {
+  // Lê o arquivo como ArrayBuffer e decodifica com encoding autodetectado
+  // (UTF-8 estrito com fallback para ANSI/CP1252 — CSVs de Excel/planilhas
+  // brasileiras quebrariam acentos como UTF-8 estrito). Compartilhado pelo
+  // import de CSV comum e pelo import do crawler.
+  function lerArquivoTexto(file, onTexto) {
     const r = new FileReader();
     r.onload = () => {
-      // CSVs exportados por Excel/planilhas brasileiras costumam vir em
-      // ANSI/CP1252 — ler como UTF-8 estrito quebra os acentos (ã vira "Ã£")
-      // e o nome do contato deixa de bater na busca do WhatsApp. Tenta UTF-8
-      // estrito primeiro; se falhar (bytes inválidos), decodifica como
-      // windows-1252, que aceita qualquer byte e preserva os acentos.
       let texto;
       try {
         texto = new TextDecoder("utf-8", { fatal: true }).decode(r.result);
       } catch (e) {
         texto = new TextDecoder("windows-1252").decode(r.result);
       }
-      processarCSV(texto);
+      onTexto(texto);
     };
     r.onerror = () => { el.textoUpload.textContent = "Erro ao ler o arquivo."; };
     r.readAsArrayBuffer(file);
+  }
+
+  function lerCsv(file) {
+    lerArquivoTexto(file, processarCSV);
+  }
+
+  // Substitui os placeholders do template de mensagem na conversão (a extensão
+  // NÃO substitui {empresa}/{nome} no envio — envia exatamente o texto do CSV).
+  // Limpa parênteses do valor inserido (o disparo não deve mandar "()" dentro
+  // do nome da empresa/loja). Se a empresa (categoria) estiver vazia, cai para
+  // o nome; se ambos vazios, remove o placeholder e limpa espaços duplos.
+  function limparParens(v) {
+    return String(v || "").replace(/[()]/g, "").trim();
+  }
+  function preencherTemplate(tpl, nome, empresa) {
+    const emp = limparParens(empresa || nome);
+    const nom = limparParens(nome);
+    return tpl
+      .split("{empresa}").join(emp)
+      .split("{nome}").join(nom)
+      .replace(/\s{2,}/g, " ")
+      .trim();
+  }
+
+  // Importa o CSV do crawler Google Places (Apify) direto no painel: mapeia as
+  // colunas do crawler para o formato da extensão e gera UMA mensagem de
+  // abertura por lead (sorteada entre as variações configuradas), com a
+  // personalização já aplicada na conversão. Filtro na importação: SÓ entram
+  // leads com telefone. Reusa o processarCSV (dedupe por telefone, registro
+  // ENVIADOS).
+  async function processarCrawler(texto) {
+    texto = texto.replace(/^\uFEFF/, "");
+    const linhas = parseCSV(texto);
+    if (linhas.length < 2) {
+      el.textoUpload.textContent = "Erro: CSV do crawler vazio ou sem dados";
+      return;
+    }
+    const cabecalho = linhas[0].map((h) => String(h).trim().toLowerCase());
+    const find = (arr) => cabecalho.findIndex((h) => arr.includes(h));
+    const idxTitle = find(["title", "nome", "name"]);
+    const idxPhoneUn = find(["phoneunformatted"]);
+    const idxPhone = find(["phone", "telefone"]);
+    const idxCategoria = find(["categoryname", "categories/0", "categoria"]);
+    if (idxTitle === -1 || (idxPhoneUn === -1 && idxPhone === -1)) {
+      el.textoUpload.textContent = "Erro: não encontrei colunas de nome/telefone no CSV do crawler.";
+      return;
+    }
+
+    const config = await lerConfig();
+    const variantes = (config.crawlerTemplates || []).filter((s) => s && s.trim());
+    if (!variantes.length) {
+      alert("Configure as mensagens de abertura (uma por linha) antes de importar o crawler.");
+      el.textoUpload.textContent = "Defina as mensagens de abertura na seção de configurações primeiro.";
+      return;
+    }
+
+    const linhasOut = [];
+    let semTelefone = 0;
+    for (let i = 1; i < linhas.length; i++) {
+      const linha = linhas[i];
+      const nome = (linha[idxTitle] || "").trim();
+      if (!nome) continue;
+      const telefone =
+        formatarTelefone(idxPhoneUn !== -1 ? linha[idxPhoneUn] : "") ||
+        formatarTelefone(idxPhone !== -1 ? linha[idxPhone] : "");
+      // Filtro do crawler: SÓ entram leads com telefone (sem telefone não tem
+      // como disparar — descartado na importação, nem vira "ignorado").
+      if (!telefone) {
+        semTelefone++;
+        continue;
+      }
+      const empresa =
+        idxCategoria !== -1 ? (linha[idxCategoria] || "").trim() || null : null;
+      const tpl = variantes[Math.floor(Math.random() * variantes.length)];
+      linhasOut.push([nome, telefone, empresa || "", preencherTemplate(tpl, nome, empresa)]);
+    }
+    if (!linhasOut.length) {
+      el.textoUpload.textContent = "Erro: nenhum lead com telefone encontrado no CSV do crawler.";
+      return;
+    }
+
+    const csvText =
+      "nome;telefone;empresa;mensagem_1\n" +
+      linhasOut.map((r) => r.map(csvEscape).join(";")).join("\n");
+    await processarCSV(csvText);
+    await adicionarLog(
+      "CSV do crawler importado: " +
+        linhasOut.length +
+        " lead(s) com telefone convertidos (1 mensagem de abertura cada)" +
+        (semTelefone ? " · " + semTelefone + " sem telefone descartado(s)" : "") +
+        ".",
+      false
+    );
+  }
+
+  function lerCrawler(file) {
+    lerArquivoTexto(file, processarCrawler);
   }
 
   // ---------- Eventos ----------
@@ -1323,6 +1648,16 @@
     el.btnExportar.addEventListener("click", () => { if (!rolando()) exportarBackup(); });
     el.btnLimpar.addEventListener("click", () => { if (!rolando()) limparLista(); });
     el.btnResetarEnviados.addEventListener("click", () => { if (!rolando()) resetarEnviados(); });
+    el.btnDividirLista.addEventListener("click", () => { if (!rolando()) dividirLista(); });
+    el.btnExportarEnviados.addEventListener("click", () => { if (!rolando()) exportarEnviados(); });
+    el.inputImportarEnviados.addEventListener("change", () => {
+      if (rolando()) { el.inputImportarEnviados.value = ""; return; }
+      if (el.inputImportarEnviados.files[0]) importarEnviados(el.inputImportarEnviados.files[0]);
+    });
+    el.inputCrawler.addEventListener("change", () => {
+      if (rolando()) { el.inputCrawler.value = ""; return; }
+      if (el.inputCrawler.files[0]) lerCrawler(el.inputCrawler.files[0]);
+    });
 
     el.corpoTabela.addEventListener("click", (e) => {
       const btn = e.target.closest("button[data-acao]");
@@ -1356,8 +1691,9 @@
       if (r.ok) {
         const sel = r.selectors || {};
         atualizarProgresso(
-          `Conexão OK. Logado no WhatsApp. Selectors: busca ${sel.searchInput ? "✓" : "✗"}, campo ${sel.compose ? "✓" : "✗"}, enviar ${sel.send ? "✓" : "✗"}`,
-          ""
+          `Conexão OK. Logado no WhatsApp. Selectors: busca ${sel.searchInput ? "✓" : "✗"}, campo ${sel.compose ? "✓" : "✗"}, enviar ${sel.send ? "✓" : "✗"}` +
+            (r.ambiguo ? " ⚠ múltiplas abas logadas — confira qual conta está ativa." : ""),
+          r.ambiguo ? "erro" : ""
         );
       } else {
         atualizarProgresso("Teste falhou: " + r.erro, "erro");

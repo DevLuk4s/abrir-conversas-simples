@@ -23,6 +23,32 @@
   // matcher escolheu o resultado, que texto tinha e se o clique/Enter abriu.
   // Preenchido por clicarPrimeiroResultado e consumido no erro 4c/4e.
   let debugNav = null;
+
+  // Detector de atividade humana na aba do WhatsApp: o robô NUNCA deve
+  // navegar/digitar/enviar enquanto o USUÁRIO está mexendo na aba (atendendo
+  // na própria aba). Só eventos REAIS contam (isTrusted) — os cliques/teclas
+  // sintéticos do robô têm isTrusted=false e não tocam o detector.
+  let ultimaAtividadeHumana = 0;
+  for (const tipo of ["mousedown", "keydown", "pointerdown", "wheel", "touchstart"]) {
+    document.addEventListener(
+      tipo,
+      (e) => {
+        if (e.isTrusted) ultimaAtividadeHumana = Date.now();
+      },
+      { capture: true, passive: true }
+    );
+  }
+  function usuarioAtivoNaAba(ms = 10000) {
+    return Date.now() - ultimaAtividadeHumana < ms;
+  }
+  // Espera o usuário parar de mexer na aba antes de navegar (máx ~20s). Se ele
+  // continuar ativo o tempo todo, retorna false (transitório → o retry tenta de novo).
+  async function aguardarUsuarioOcioso() {
+    if (!usuarioAtivoNaAba()) return true;
+    const ok = await aguardar(() => (usuarioAtivoNaAba() ? null : true), 20000, 400);
+    return !!ok;
+  }
+
   const SELETORES = {
     login: [".landing-window", '[data-testid="qrcode"]'],
     searchInput: [
@@ -549,22 +575,26 @@
       document.querySelector("#pane-side");
     if (!raiz) return null;
     const buscaEl = primeiro(SELETORES.searchInput);
-    const nos = raiz.querySelectorAll("span, div");
-    for (const no of nos) {
-      if (!estaVisivel(no)) continue; // ignora conversas fixadas/compose ocultos
-      const txt = no.textContent || "";
-      if (!txt || txt.length > 40) continue; // ignora nós grandes (o painel inteiro etc.)
+    // Casa o número/nome contra o TEXTO COMPLETO de cada linha de resultado
+    // (não contra nós curtos isolados). Nomes longos de lojas ("Portasprontas -
+    // Portas de Alumínio Para Móveis") ou números formatados ficam espalhados/
+    // truncados em vários spans e cada nó isolado passa de 40 chars — o match
+    // por nó perdia essas linhas e o robô caía no Enter (que não navegava).
+    // O que importa é o item clicável inteiro, não o nó interno.
+    const itens = raiz.querySelectorAll(
+      '[role="listitem"], [data-testid="cell-frame-container"], [role="button"]'
+    );
+    for (const it of itens) {
+      if (!estaVisivel(it)) continue; // ignora conversas fixadas/compose ocultos
+      if (buscaEl && (it === buscaEl || buscaEl.contains(it))) continue;
+      const txt = (it.textContent || "").trim();
+      if (!txt || txt.length > 200) continue;
       const d = apenasDigitos(txt);
       const bateDigito = d.length >= 8 && d.endsWith(alvo);
       const bateNome =
         tokensNome.length > 0 &&
         tokensNome.every((tk) => normalizarNome(txt).includes(tk));
-      if (bateDigito || bateNome) {
-        if (buscaEl && (no === buscaEl || buscaEl.contains(no))) continue;
-        return (
-          no.closest('[role="listitem"], [role="button"], [data-testid="cell-frame-container"]') || no
-        );
-      }
+      if (bateDigito || bateNome) return it;
     }
     return null;
   }
@@ -590,6 +620,22 @@
       clicavel.click();
       await SLEEP(120 + Math.random() * 180);
     }
+  }
+
+  // Confirma que a busca REALMENTE navegou pra uma conversa — não apenas que um
+  // compose está visível. Na tela "Nova conversa" o WhatsApp Web mantém a
+  // conversa anterior visível no painel direito (header + compose); um clique/
+  // Enter que NÃO navegou deixaria esse compose "de mentira" visível e a
+  // checagem antiga (só compose) marcava falso "abriu" (o log mostrava
+  // `clique=enter (abriu)` sem o header ter mudado). Sinal forte de navegação:
+  // a tela "Nova conversa" FECHOU (abrir um chat sai dela) E o compose do chat
+  // novo está visível. Retorna o compose ou null (não navegou em `timeout`).
+  async function aguardarNavegacao(timeout = 6000) {
+    return aguardar(() => {
+      if (!primeiroComposeVisivel()) fecharAvisoCriptografia();
+      if (estaNaTelaNovaConversa()) return null;
+      return primeiroComposeVisivel();
+    }, timeout, 300);
   }
 
   // Abre a conversa pelo resultado da busca. Retorna true se a composição
@@ -634,12 +680,9 @@
       debugNav.textoAlvo = (el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60);
       await clicarDeVerdade(el);
 
-      // Confirma a navegação: compose visível (fechando o aviso de privacidade
-      // se o WhatsApp cobrir o chat na 1ª conversa com o número).
-      const abriu = await aguardar(() => {
-        if (!primeiroComposeVisivel()) fecharAvisoCriptografia();
-        return primeiroComposeVisivel();
-      }, 6000, 300);
+      // Confirma a navegação: a tela "Nova conversa" fechou E o compose do chat
+      // novo ficou visível (fechando o aviso de criptografia se cobrir o chat).
+      const abriu = await aguardarNavegacao();
       if (abriu) {
         debugNav.abriu = true;
         return true;
@@ -655,10 +698,7 @@
     if (busca && !telaComVazioVisivel()) {
       debugNav.metodo = "enter";
       pressionarTecla(busca, "Enter", "Enter", 13);
-      const abriuEnter = await aguardar(() => {
-        if (!primeiroComposeVisivel()) fecharAvisoCriptografia();
-        return primeiroComposeVisivel();
-      }, 8000, 300);
+      const abriuEnter = await aguardarNavegacao(8000);
       if (abriuEnter) {
         debugNav.abriu = true;
         return true;
@@ -669,10 +709,15 @@
 
   // Fecha o aviso "Suas conversas e ligações são privadas" (criptografia),
   // que o WhatsApp mostra cobrindo o chat na primeira conversa com um número
-  // novo — sem fechar, o compose nunca aparece. Procura um botão "OK" visível.
+  // novo — sem fechar, o compose nunca aparece. Escopado ao diálogo/overlay
+  // ativo e só acha botões VISÍVEIS (o botão "OK" de outro modal não é clicado).
   function fecharAvisoCriptografia() {
-    const candidatos = document.querySelectorAll('button, [role="button"]');
+    const alvo =
+      document.querySelector('[data-testid="conversation-panel"], [role="dialog"], .overlay, .intro') ||
+      document.body;
+    const candidatos = alvo.querySelectorAll('button, [role="button"]');
     for (const b of candidatos) {
+      if (!estaVisivel(b)) continue;
       const texto = (b.innerText || b.textContent || "").trim();
       if (/^ok$/i.test(texto)) {
         b.click();
@@ -703,6 +748,11 @@
   //   { ok:false, erro:"numero-invalido" }          -> definitivo, não tenta de novo
   //   { ok:false, erro:<transitório>, header }      -> pode ser tentado de novo
   async function tentarAbrirConversa(telefone, nome) {
+    // Segurança: se o usuário estiver mexendo na aba do WhatsApp, espera ele
+    // parar antes de qualquer navegação (limparTudo muda a tela dele).
+    if (!(await aguardarUsuarioOcioso())) {
+      return { ok: false, erro: "usuario-ativo" };
+    }
     await limparTudo();
     // O estado correto pra buscar número novo É a tela "Nova conversa". Se
     // limparTudo confirmou ela, um compose residual de conversa anterior
@@ -747,13 +797,13 @@
     const abriu = await clicarPrimeiroResultado(telefone, nome, busca, itensAntes);
     if (!abriu) await SLEEP(1000 + Math.random() * 700);
 
-    // 4. Aguardar o campo de mensagem (compose box). Se aparecer o aviso de
+    // 4. Aguardar o campo de mensagem (compose box). Confirma que a tela
+    // "Nova conversa" FECHOU (busca navegou) antes de aceitar qualquer compose
+    // visível — naquela tela a conversa anterior continua no painel direito e o
+    // compose dela criava falso "conversa aberta". Se aparecer o aviso de
     // criptografia (comum na 1ª conversa com um número novo), fecha sozinho
     // clicando em "OK" a cada checagem, até o compose ficar visível.
-    const compose = await aguardar(() => {
-      if (!primeiroComposeVisivel()) fecharAvisoCriptografia();
-      return primeiroComposeVisivel();
-    }, 12000);
+    const compose = await aguardarNavegacao(12000);
     if (!compose) {
       const invalido = await detectarNumeroInvalido();
       await limparTudo();
@@ -768,7 +818,7 @@
     const textoHeaderDepois = headerDepois ? headerDepois.innerText.trim() : "";
     if (textoHeaderAntes && textoHeaderDepois === textoHeaderAntes) {
       await limparTudo();
-      console.debug("[AbrirConversas] conversa-errada (4c header não mudou)", {
+      if (AC_DEBUG) console.debug("[AbrirConversas] conversa-errada (4c header não mudou)", {
         telefone, nome, textoHeaderAntes, textoHeaderDepois, debugNav,
       });
       return {
@@ -785,7 +835,7 @@
     const bateHeader = validarNumeroNoHeader(telefone, textoHeaderDepois);
     if (bateHeader === false) {
       await limparTudo();
-      console.debug("[AbrirConversas] conversa-errada (4e número diferente no header)", {
+      if (AC_DEBUG) console.debug("[AbrirConversas] conversa-errada (4e número diferente no header)", {
         telefone, nome, textoHeaderDepois, debugNav,
       });
       return {
@@ -803,6 +853,25 @@
       return { ok: false, erro: "numero-invalido" };
     }
 
+    // 4f. CONVERSA EXISTENTE: se o chat aberto já tem QUALQUER mensagem, é um
+    // contato/conversa real do usuário (não é lead novo) — NUNCA enviar a
+    // mensagem automática pra lá (protege contra cair em chat ativo/pessoal).
+    // Espera curta pro WhatsApp renderizar as mensagens de um chat existente;
+    // conversa vazia (lead novo) segue o fluxo normal de envio.
+    const conversaExistente = await aguardar(
+      () =>
+        conversaPossuiMensagens(primeiro(SELETORES.panelMensagens)) ? true : null,
+      2000,
+      250
+    );
+    if (conversaExistente) {
+      await limparTudo();
+      if (AC_DEBUG) console.debug("[AbrirConversas] conversa-existente (chat com histórico)", {
+        telefone, nome, debugNav,
+      });
+      return { ok: false, erro: "conversa-existente", nav: debugNav };
+    }
+
     return { ok: true, compose };
   }
 
@@ -817,7 +886,9 @@
         await limparTudo();
         return { abortado: true };
       }
-      if (navegou.ok || navegou.erro === "numero-invalido") break;
+      // "conversa-existente" é DEFINITIVO (o chat já tem mensagens — não muda
+      // numa nova tentativa): para de reabrir o chat do contato do usuário.
+      if (navegou.ok || navegou.erro === "numero-invalido" || navegou.erro === "conversa-existente") break;
       await SLEEP(1200 + Math.random() * 1500);
     }
     if (!navegou || !navegou.ok) {
@@ -825,6 +896,9 @@
       if (abortado) return { abortado: true };
       if (navegou && navegou.erro === "numero-invalido") {
         return { erro: "numero-invalido" };
+      }
+      if (navegou && navegou.erro === "conversa-existente") {
+        return { erro: "conversa-existente" };
       }
       const ultimoErro = navegou && navegou.erro ? navegou.erro : "sem-resposta";
       return {
@@ -858,6 +932,19 @@
       if (nos.length) return nos[nos.length - 1];
     }
     return null;
+  }
+
+  // Uma conversa "existente" (contato/cliente real do usuário) tem mensagens
+  // renderizadas no painel. Lead novo (nunca contatado) abre com o painel VAZIO.
+  // Regra de segurança dura: só se envia para conversa vazia — a mensagem da
+  // rodada NUNCA pode ir pra um chat com histórico (ex.: contato que o usuário
+  // está respondendo pelo celular).
+  function conversaPossuiMensagens(panel) {
+    if (!panel) return false;
+    for (const sel of ['[data-testid*="msg-container"]', ".message-in", ".message-out"]) {
+      if (panel.querySelector(sel)) return true;
+    }
+    return false;
   }
 
   // A mensagem foi ACEITA pelo servidor do WhatsApp? Procura o tique nativo
@@ -894,6 +981,10 @@
   // Não mexe no estado da conversa (não chama limparTudo) — o sendSeq chama
   // limparTudo ao final (depois de enviar todas as mensagens).
   async function enviarNoCompose(compose, mensagem, simulacao) {
+    // Segurança: se o usuário voltou a mexer na aba (mouse/teclado reais),
+    // NÃO envia — a mensagem não pode ir pro meio da interação dele.
+    if (usuarioAtivoNaAba()) return { ok: false, erro: "usuario-ativo" };
+
     // O WhatsApp React pode trocar/re-renderizar o nó do compose após cada
     // envio — a referência capturada na abertura da conversa fica desanexada e
     // digitar nela não chega ao campo real (a 2ª mensagem da sequência falhava:

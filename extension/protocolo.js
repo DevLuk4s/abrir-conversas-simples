@@ -29,4 +29,7 @@ if (!globalThis.__acProtocolo) {
 
   // Delay/aguarda genérico, compartilhado por todos os contextos.
   globalThis.SLEEP = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Log de diagnóstico desligado por padrão (instalação/update e conversa-errada).
+  globalThis.AC_DEBUG = false;
 }

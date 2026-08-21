@@ -37,7 +37,13 @@ LISTA PRONTA → IMPORTAÇÃO → VALIDAÇÃO → FILA → ENVIO SEQUENCIAL → 
    de **Enter** na busca (comportamento nativo).
 5. **Valida a conversa** — só envia se o header mudou desde antes da busca e, se o header
    mostrar um número de telefone, se ele for o do lead. Senão: `conversa-errada`.
-6. **Envia a sequência** — digita a mensagem, clica em enviar e confirma (compose vazio
+6. **Só envia para conversa vazia** — se o chat aberto já tiver QUALQUER mensagem
+   (`conversa-existente`), é um contato/conversa real do usuário (não um lead novo) e a
+   mensagem **não** é enviada — protege contra cair em chat ativo/pessoal enquanto você
+   responde no celular. O lead é marcado como "Conversa existente" para revisão manual.
+7. **Respeita o uso da aba** — se você estiver mexendo na aba do WhatsApp Web (mouse/teclado),
+   o robô espera até você parar (máx ~20s) e nunca envia enquanto você interage.
+8. **Envia a sequência** — digita a mensagem, clica em enviar e confirma (compose vazio
    OU última mensagem visível contém o trecho). Repete para as demais mensagens da célula,
    aguardando o intervalo entre mensagens. Fecha (limpa) ao final.
 
@@ -108,6 +114,53 @@ Controles durante o disparo: **Pausar / Retomar**, **Parar** e **EMERGÊNCIA**
 "Marcar enviada", "Número não encontrado" e "Abrir manual" (via `wa.me`) por linha, além
 de exportar/importar backup (JSON) e resetar o histórico de enviados.
 
+## Disparo simultâneo com 2 números (perfis isolados)
+
+Para enviar com **duas contas do WhatsApp ao mesmo tempo** (o dobro de volume, mesmo
+tempo) **sem nenhum contato receber a mensagem das duas contas**.
+
+### Preparação (uma vez só)
+
+1. **Crie 2 perfis isolados** do Chrome, cada um com o seu próprio
+   `--user-data-dir`. Ex.:
+   - Perfil A: abra o Chrome normalmente.
+   - Perfil B: `chrome --user-data-dir=~/perfil-b`.
+2. **Carregue a extensão nos dois perfis**: `chrome://extensions` → modo desenvolvedor →
+   "Carregar sem compactação" → pasta `extension/`.
+3. **Logue um número diferente em cada perfil** (WhatsApp Web):
+   - Perfil A → número 1.
+   - Perfil B → número 2.
+   - ⚠️ O mesmo número nos dois perfis **derruba a sessão do outro** — isso não é suportado.
+
+### A cada lote
+
+1. No **perfil A**: abra o painel (ícone da extensão) e importe o CSV completo.
+2. Clique em **"Dividir lista"** e informe o número de contas (ex.: 2). O painel baixa
+   N arquivos com **números disjuntos** — só os `pendentes` entram (já enviados / sem
+   telefone / ignorados / não encontrados ficam fora). Ex.: `dividida-1-de-2-2026-08-17.csv`
+   e `dividida-2-de-2-2026-08-17.csv`.
+3. **Importe uma parte em cada perfil**:
+   - Perfil A → **parte 1**.
+   - Perfil B → **parte 2**.
+4. Nos dois, ajuste as configurações de segurança e faça **"Testar conexão WhatsApp"** →
+   **"Disparar fila"** ao mesmo tempo. Como os números nunca se sobrepõem, cada contato
+   recebe a mensagem de **uma única conta**.
+
+### Regras e avisos
+
+- **Nunca rode a mesma parte em dois perfis** — aí sim o mesmo contato receberia 2x.
+- O histórico de enviados (`ENVIADOS`) é **isolado por perfil** (`chrome.storage.local`).
+- Para sincronizar o histórico **entre lotes sequenciais** (ex.: terminou o lote 1 na
+  conta A, quer pular os já enviados na conta B):
+  1. No perfil que terminou: **"Exportar enviados"** (gera `abrir-conversas-enviados-*.json`).
+  2. No outro perfil: **"Importar enviados"**.
+  3. No próximo import do CSV, os números importados entram como `enviado`.
+  - O merge é por **união**, mantendo a data mais antiga (não sobrescreve).
+- Esse sync **não protege contra disparo simultâneo com a mesma parte**: o papel de evitar
+  duplicata em tempo real é da **"Dividir lista"**, não do sync de enviados.
+- Não há limite técnico para o número de contas — divida em 3, 4... basta importar cada
+  parte no perfil correspondente.
+
 ## Estrutura
 
 ```
@@ -135,4 +188,5 @@ extension/
 
 Ver `extension/SESSIONS.md` para o detalhamento das sessões e correções aplicadas
 (incluindo: match de contato salvo por nome com anotações no CSV, compose desanexado na
-2ª mensagem, encoding do CSV, classificação de "não encontrado", lock de envio).
+2ª mensagem, encoding do CSV, classificação de "não encontrado", lock de envio, e a regra
+de segurança de **nunca enviar para conversa existente** + pausa quando o usuário usa a aba).

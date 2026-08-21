@@ -124,45 +124,55 @@ async function garantirContentScript(tabId) {
   if (!resp2 || !resp2.ok) throw new Error("content script não respondeu após injeção");
 }
 
+async function pingAba(tabId) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, { action: AC_MSG.PING });
+  } catch (e) {
+    return null;
+  }
+}
+
 async function getWhatsAppTab() {
   let tabs = await chrome.tabs.query({ url: "https://web.whatsapp.com/*" });
   tabs = tabs.filter((t) => t.url && t.url.startsWith("https://web.whatsapp.com/"));
-  let tab = null;
-  // Com mais de uma aba do WhatsApp aberta, escolhe a que responde PING e
-  // está logada — mandar mensagem pra aba errada (ex.: uma antiga deslogada)
-  // faria o envio ir pro lugar errado.
+  const candidatas = [];
   for (const t of tabs) {
-    try {
-      const r = await chrome.tabs.sendMessage(t.id, { action: AC_MSG.PING });
-      if (r && r.ok && r.logado) {
-        tab = t;
-        break;
-      }
-    } catch (e) {
-      // sem content script nessa aba — tenta a próxima
-    }
+    const r = await pingAba(t.id);
+    if (r && r.ok && r.logado) candidatas.push(t);
   }
-  if (!tab) {
-    // Antes de abrir uma aba nova, tenta injetar o content script na primeira
-    // aba existente (ex.: o WhatsApp Web estava aberto antes de a extensão ser
-    // carregada). Evita acumular abas órfãs a cada disparo.
+  // Sem aba respondendo (abertas antes da extensão ser carregada): injeta o
+  // content script nas existentes antes de abrir uma aba nova — evita abas
+  // órfãs a cada disparo.
+  if (!candidatas.length) {
     for (const t of tabs) {
       try {
         await garantirContentScript(t.id);
-        const r = await chrome.tabs.sendMessage(t.id, { action: AC_MSG.PING });
-        if (r && r.ok && r.logado) {
-          tab = t;
-          break;
-        }
+        const r = await pingAba(t.id);
+        if (r && r.ok && r.logado) candidatas.push(t);
       } catch (e) {
         // sem content script/injeção falhou nessa aba — tenta a próxima
       }
     }
   }
+  let tab = null;
+  if (candidatas.length) {
+    // Várias abas logadas = risco de disparar pra conta errada. Prioridade:
+    // aba escolhida em disparo anterior (waTabEscolhida) > aba ativa > mais
+    // recentemente acessada. Sinaliza ambiguidade pro painel avisar o usuário.
+    const { waTabEscolhida } = await chrome.storage.session.get("waTabEscolhida");
+    const pref = (t) =>
+      t.id === waTabEscolhida ? 0 : t.active ? 1 : t.lastAccessed ? 2 : 3;
+    candidatas.sort((a, b) => pref(a) - pref(b));
+    tab = candidatas[0];
+    await chrome.storage.session.set({ waTabEscolhida: tab.id, waTabAmbiguo: candidatas.length > 1 });
+  }
   if (!tab) {
     tab = await chrome.tabs.create({ url: "https://web.whatsapp.com/" });
-    // Garante o DOM pronto antes do PING/injeção (evita falso "content script não respondeu").
-    await aguardarAbaCompleta(tab.id);
+    await chrome.storage.session.set({ waTabEscolhida: tab.id, waTabAmbiguo: false });
+    // Garante o DOM pronto antes do PING/injeção (evita falso "content script
+    // não respondeu"); se a aba demorar, espera mais antes de injetar.
+    const completa = await aguardarAbaCompleta(tab.id);
+    if (!completa) await SLEEP(3000);
   }
   await garantirContentScript(tab.id);
   return tab.id;
@@ -171,9 +181,9 @@ async function getWhatsAppTab() {
 chrome.runtime.onInstalled.addListener(async (details) => {
   const versao = chrome.runtime.getManifest().version;
   if (details.reason === "install") {
-    console.log("Abrir Conversas instalado v" + versao);
+    if (AC_DEBUG) console.log("Abrir Conversas instalado v" + versao);
   } else if (details.reason === "update") {
-    console.log("Abrir Conversas atualizado: v" + details.previousVersion + " -> v" + versao);
+    if (AC_DEBUG) console.log("Abrir Conversas atualizado: v" + details.previousVersion + " -> v" + versao);
     // Saneamento pós-update: um disparo que estava rodando quando a extensão
     // foi atualizada deixa leads em "enviando" (que o resume não pega) e STATS
     // com fila pendente. Converte pra "erro" (NUNCA pra "pendente" — o content
@@ -204,7 +214,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (sender && sender.id !== chrome.runtime.id) return;
   if (msg.action === AC_MSG.GET_WHATSAPP_TAB) {
     getWhatsAppTab()
-      .then((id) => sendResponse({ ok: true, tabId: id }))
+      .then(async (id) => {
+        const { waTabAmbiguo } = await chrome.storage.session.get("waTabAmbiguo");
+        sendResponse({ ok: true, tabId: id, ambiguo: !!waTabAmbiguo });
+      })
       .catch((e) => sendResponse({ ok: false, erro: String(e) }));
     return true;
   }

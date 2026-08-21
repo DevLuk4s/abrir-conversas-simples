@@ -62,6 +62,24 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
         Resetar enviados
       </button>
+      <button class="btn btn-exportar" id="btnDividirLista">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+        Dividir lista
+      </button>
+      <button class="btn btn-exportar" id="btnExportarEnviados">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Exportar enviados
+      </button>
+      <label class="btn btn-importar upload-pequeno">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Importar enviados
+        <input type="file" id="inputImportarEnviados" accept=".json" style="display:none" />
+      </label>
+      <label class="btn btn-exportar upload-pequeno">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+        Importar crawler
+        <input type="file" id="inputCrawler" accept=".csv" style="display:none" />
+      </label>
     </div>
   </section>
 
@@ -75,6 +93,12 @@
     </div>
 
     <div class="grid-config">
+
+      <div class="campo campo-largo">
+        <label class="rotulo" for="cfgCrawlerTemplates">Mensagens de abertura — crawler (uma por linha)</label>
+        <textarea id="cfgCrawlerTemplates" rows="5" spellcheck="false" placeholder="Uma variação por linha. Use {empresa} e {nome} — preenchidos na importação do crawler."></textarea>
+        <div class="hint">Cada linha é uma variação da mensagem_1. No "Importar crawler" cada lead recebe uma sorteada, com {empresa} (categoria) e {nome} preenchidos na conversão — evita mensagem idêntica pra todos. Evite saudações de horário (bom dia/boa tarde/boa noite): a mensagem é gerada na importação e o disparo pode acontecer em outro horário.</div>
+      </div>
 
       <div class="campo">
         <label class="rotulo" for="cfgPerfil">Perfil de segurança</label>
